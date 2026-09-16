@@ -4,7 +4,7 @@ Proyecto integrador de la materia **Programación Backend II** (CoderHouse).
 
 API REST para gestionar las **clases y eventos del gimnasio Enjoy**: los organizadores (profes) crean eventos — clases, workshops, torneos o actividades — y los usuarios se inscriben ocupando un cupo.
 
-> 🚧 **Estado:** Pre-entrega 3 — autenticación con JWT en cookie HTTP Only. Las funcionalidades se agregan en cada pre-entrega (ver [Avance](#avance)).
+> 🚧 **Estado:** Pre-entrega 4 — autenticación centralizada con Passport.js (JWT en cookie HTTP Only). Las funcionalidades se agregan en cada pre-entrega (ver [Avance](#avance)).
 
 ## Tecnologías
 
@@ -12,9 +12,10 @@ API REST para gestionar las **clases y eventos del gimnasio Enjoy**: los organiz
 - MongoDB Atlas + Mongoose
 - bcrypt (hash de contraseñas)
 - jsonwebtoken (JWT) + cookie-parser (cookie HTTP Only)
+- Passport.js (passport-local, passport-jwt)
 - dotenv
 - nodemon (desarrollo)
-- Próximas entregas: Passport.js, Nodemailer
+- Próximas entregas: Nodemailer
 
 ## Instalación
 
@@ -62,12 +63,13 @@ El servidor queda disponible en `http://localhost:<PORT>` (por defecto `http://l
 
 ```
 src/
-├── app.js                     # Configura Express (json, cookies, router /api, 404 y errores)
+├── app.js                     # Configura Express (json, cookies, Passport, router /api, 404 y errores)
 ├── server.js                  # Punto de entrada: valida env, conecta a MongoDB y levanta el servidor
 ├── config/
 │   ├── env.js                 # Carga dotenv, expone la configuración y valida variables obligatorias
 │   ├── db.js                  # Conexión a MongoDB Atlas con Mongoose
-│   └── cookie.js              # Nombre y opciones de la cookie de autenticación
+│   ├── cookie.js              # Nombre y opciones de la cookie de autenticación
+│   └── passport.config.js     # Estrategias de Passport: register, login y current
 ├── routes/
 │   ├── index.js               # Router principal montado en /api
 │   ├── health.router.js
@@ -76,10 +78,9 @@ src/
 ├── controllers/               # Manejo de request/response
 │   ├── health.controller.js
 │   ├── events.controller.js
-│   └── sessions.controller.js
-├── services/                  # Lógica de negocio (validaciones, reglas)
-│   ├── events.service.js
-│   └── sessions.service.js
+│   └── sessions.controller.js # Genera el JWT y maneja la cookie tras la autenticación
+├── services/                  # Lógica de negocio
+│   └── events.service.js
 ├── repositories/              # Acceso a datos desacoplado de la persistencia
 │   └── user.repository.js
 ├── dao/                       # Operaciones concretas contra MongoDB
@@ -90,13 +91,13 @@ src/
 │   ├── user.model.js
 │   └── event.model.js
 ├── middlewares/
-│   ├── auth.middleware.js     # Lee la cookie, verifica el JWT y setea req.user
+│   ├── auth.middleware.js     # passportCall: ejecuta una estrategia y traduce sus fallos al formato de la API
 │   ├── notFound.middleware.js
 │   └── errorHandler.middleware.js
 └── utils/
     ├── response.js            # Helpers de respuesta con formato uniforme
     ├── hash.js                # createHash / isValidPassword (bcrypt)
-    ├── jwt.js                 # generateToken / verifyToken
+    ├── jwt.js                 # generateToken (lo usa el controller de login)
     ├── validators.js          # Validación y normalización de datos
     └── AppError.js            # Error con código HTTP
 ```
@@ -107,14 +108,45 @@ src/
 
 **Event**: `title`, `description`, `category` (`clase` | `workshop` | `torneo` | `actividad`), `date`, `location`, `capacity`, `organizer` (ref. User), timestamps.
 
-## Autenticación
+## Autenticación con Passport.js
 
-1. `POST /api/sessions/login` valida las credenciales con bcrypt y genera un JWT con payload `{ id, email, role }`, firmado con `JWT_SECRET` y con expiración `JWT_EXPIRES_IN`. **La contraseña nunca va en el token.**
-2. El token se guarda en la cookie **`currentUser`**: `httpOnly: true`, `sameSite: 'lax'`, `maxAge: 3600000` (1 h) y `secure: true` solo en producción.
-3. Las rutas protegidas usan `middlewares/auth.middleware.js`: lee la cookie, verifica el JWT y guarda el payload en `req.user`. Si no hay cookie o el token es inválido, está manipulado o expiró → `401 No autenticado`.
-4. `POST /api/sessions/logout` elimina la cookie.
+Toda la autenticación pasa por estrategias de Passport definidas en **`src/config/passport.config.js`**. `app.js` solo registra las estrategias (`initializePassport()`) y ejecuta `passport.initialize()`. No se usan sesiones de servidor (`session: false`): el estado viaja en el JWT.
 
-Ante cualquier fallo de login (email inexistente o contraseña incorrecta) la respuesta es siempre la misma: `401 Credenciales inválidas`.
+Las rutas delegan en la estrategia correspondiente mediante `passportCall(nombre)` (`middlewares/auth.middleware.js`), un envoltorio de `passport.authenticate(nombre, { session: false }, callback)` que deja el usuario autenticado en `req.user` y convierte los fallos al formato `{ status: "error", message }`.
+
+```
+POST /register → passportCall('register') → controller.register  → 201 { payload: usuario }
+POST /login    → passportCall('login')    → controller.login     → genera JWT + cookie currentUser
+GET  /current  → passportCall('current')  → controller.current   → 200 { payload: { id, email, role } }
+POST /logout   → controller.logout (no pasa por Passport)         → borra la cookie
+```
+
+### Estrategias
+
+| Estrategia | Tipo | Qué hace | Fallos |
+|---|---|---|---|
+| `register` | `passport-local` (`usernameField: email`) | Valida campos obligatorios, formato de email y largo de contraseña; normaliza el email (trim + minúsculas); verifica unicidad; hashea con bcrypt; crea el usuario con rol por defecto `user` (el `role` del body se ignora). Devuelve el usuario **sin password**. | 400 `Faltan campos obligatorios` · 400 contraseña corta · 409 `El email ya está registrado` |
+| `login` | `passport-local` (`usernameField: email`) | Busca el usuario por email normalizado y compara la contraseña con bcrypt. Devuelve `{ id, email, role }`. **No genera el JWT**: eso lo hace el controller. | 400 `Faltan campos obligatorios` · 401 `Credenciales inválidas` (siempre el mismo mensaje) |
+| `current` | `passport-jwt` | Extrae el token de la cookie `currentUser`, verifica firma (`JWT_SECRET`, HS256) y expiración, y deja `{ id, email, role }` en `req.user`. | 401 `No autenticado` (sin cookie, token inválido, manipulado o expirado) |
+
+### JWT y cookie
+
+- El **controller de login** genera el JWT (`utils/jwt.js`) con payload `{ id, email, role }`, firmado con `JWT_SECRET` y con expiración `JWT_EXPIRES_IN`. **La contraseña nunca va en el token.**
+- El token se guarda en la cookie **`currentUser`**: `httpOnly: true`, `sameSite: 'lax'`, `maxAge: 3600000` (1 h) y `secure: true` solo en producción.
+- `POST /api/sessions/logout` elimina la cookie.
+
+### Estrategias externas (preparado para Google / GitHub)
+
+`passport.config.js` registra las estrategias desde un único objeto `strategies`. Para sumar un proveedor externo alcanza con instalar su paquete (por ejemplo `passport-github2`), crear la estrategia en ese archivo, agregarla al objeto y crear sus rutas en `sessions.router.js` usando `passportCall('github')`. **`app.js` no se modifica.**
+
+```js
+const strategies = {
+  register: registerStrategy,
+  login: loginStrategy,
+  current: currentStrategy,
+  // github: githubStrategy,
+};
+```
 
 ## Formato de respuesta
 
@@ -293,4 +325,5 @@ curl -X POST http://localhost:8080/api/sessions/logout -b cookies.txt -c cookies
 | 1 | Refactor arquitectónico inicial (estructura por capas) | ✅ |
 | 2 | Registro seguro de usuarios (validación, bcrypt, MongoDB) | ✅ |
 | 3 | Autenticación con JWT y cookies (login, current, logout) | ✅ |
-| 4 – 8 | — | ⏳ Pendientes |
+| 4 | Autenticación centralizada con Passport.js (estrategias register, login, current) | ✅ |
+| 5 – 8 | — | ⏳ Pendientes |
