@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const DATE_ONLY_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 
 export const PASSWORD_MIN_LENGTH = 8;
 export const PASSWORD_MAX_BYTES = 72;
@@ -15,8 +16,19 @@ export const isValidObjectId = (id) => mongoose.isObjectIdOrHexString(id);
 
 export const isPositiveInteger = (value) => Number.isInteger(value) && value > 0;
 
-export const parseFutureDate = (value) => {
+export const isNonNegativeNumber = (value) => typeof value === 'number' && Number.isFinite(value) && value >= 0;
+
+export const isDateOnly = (value) => DATE_ONLY_REGEX.test(value);
+
+// Acepta strings ISO 8601 o timestamps numéricos; devuelve null si no es una fecha válida.
+export const parseDate = (value) => {
   if (typeof value !== 'string' && typeof value !== 'number') return null;
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) || date <= new Date() ? null : date;
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
+// Convierte un query param a entero; undefined si no vino, NaN si no es un entero.
+export const parseIntegerParam = (value) => {
+  if (value === undefined) return undefined;
+  return typeof value === 'string' && /^\d+$/.test(value) ? Number(value) : Number.NaN;
 };

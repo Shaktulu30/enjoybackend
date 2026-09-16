@@ -4,7 +4,7 @@ Proyecto integrador de la materia **Programación Backend II** (CoderHouse).
 
 API REST para gestionar las **clases y eventos del gimnasio Enjoy**: los organizadores (profes) crean eventos — clases, workshops, torneos o actividades — y los usuarios se inscriben ocupando un cupo.
 
-> 🚧 **Estado:** Pre-entrega 5 — roles y autorización (401 vs 403, matriz de permisos y propiedad de eventos). Las funcionalidades se agregan en cada pre-entrega (ver [Avance](#avance)).
+> 🚧 **Estado:** Pre-entrega 6 — CRUD de eventos con reglas de negocio, filtros, paginación y ordenamiento. Las funcionalidades se agregan en cada pre-entrega (ver [Avance](#avance)).
 
 ## Tecnologías
 
@@ -127,7 +127,7 @@ src/
 
 **User**: `first_name`, `last_name`, `email` (único, guardado en minúsculas), `password` (hash bcrypt, nunca se devuelve), `role` (`user` | `organizer` | `admin`, default `user`), timestamps.
 
-**Event**: `title`, `description`, `category` (`clase` | `workshop` | `torneo` | `actividad`), `date`, `location`, `capacity`, `organizer` (ref. User, dueño del evento), `status` (`published` | `cancelled`, default `published`), timestamps.
+**Event**: `title`, `description`, `category`, `date`, `location`, `capacity`, `price`, `status` (`draft` | `published` | `cancelled` | `finished`), `organizer` (referencia ObjectId a User), timestamps. Detalle y reglas en [Eventos: reglas de negocio](#eventos-reglas-de-negocio).
 
 ## Roles y autorización
 
@@ -150,8 +150,8 @@ Definida en `src/config/roles.js` (`PERMISSIONS`). Las rutas referencian estas c
 | Consultar eventos publicados | ✅ | ✅ | ✅ | ✅ | — (pública) |
 | Crear eventos | ❌ 401 | ❌ 403 | ✅ | ✅ | `EVENTS_CREATE` |
 | Modificar eventos propios | ❌ 401 | ❌ 403 | ✅ | ✅ | `EVENTS_UPDATE_OWN` |
-| Cancelar eventos propios | ❌ 401 | ❌ 403 | ✅ | ✅ | `EVENTS_CANCEL_OWN` |
-| Modificar / cancelar **cualquier** evento | ❌ 401 | ❌ 403 | ❌ 403 | ✅ | `EVENTS_MANAGE_ANY` |
+| Cambiar estado de eventos propios (publicar, cancelar, finalizar) | ❌ 401 | ❌ 403 | ✅ | ✅ | `EVENTS_CHANGE_STATUS_OWN` |
+| Modificar / cambiar estado de **cualquier** evento | ❌ 401 | ❌ 403 | ❌ 403 | ✅ | `EVENTS_MANAGE_ANY` |
 | Ver todos los usuarios | ❌ 401 | ❌ 403 | ❌ 403 | ✅ | `USERS_READ_ALL` |
 | Cambiar el rol de un usuario | ❌ 401 | ❌ 403 | ❌ 403 | ✅ | `USERS_UPDATE_ROLE` |
 | Ver la propia sesión (`/current`) | ❌ 401 | ✅ | ✅ | ✅ | autenticado |
@@ -174,7 +174,7 @@ authenticate  →  authorize(PERMISSIONS.X)  →  authorizeEventOwner (si aplica
 ```js
 // src/routes/events.router.js
 router.post('/', authenticate, authorize(PERMISSIONS.EVENTS_CREATE), createEvent);
-router.put('/:eid', authenticate, authorize(PERMISSIONS.EVENTS_UPDATE_OWN), authorizeEventOwner, updateEvent);
+router.put('/:id', authenticate, authorize(PERMISSIONS.EVENTS_UPDATE_OWN), authorizeEventOwner, updateEvent);
 ```
 
 ### 401 vs 403
@@ -185,6 +185,44 @@ router.put('/:eid', authenticate, authorize(PERMISSIONS.EVENTS_UPDATE_OWN), auth
 | **403 Forbidden** | **Sé quién sos, pero no podés hacer esto.** | Sesión válida pero el rol no está permitido, o el evento pertenece a otro organizer |
 
 El rol se toma del JWT: si un admin cambia el rol de un usuario, este debe volver a iniciar sesión para que el cambio aplique.
+
+## Eventos: reglas de negocio
+
+Todas estas validaciones viven en `src/services/events.service.js` (no en rutas ni controllers). La autorización (rol y dueño) la resuelven los middlewares antes de llegar al servicio.
+
+### Modelo
+
+| Campo | Tipo | Reglas |
+|---|---|---|
+| `title` | String | Obligatorio |
+| `description` | String | Obligatorio |
+| `category` | String | Obligatorio: `clase` · `workshop` · `torneo` · `actividad` |
+| `date` | Date | Obligatorio; no puede ser pasada |
+| `location` | String | Obligatorio |
+| `capacity` | Number | Obligatorio, entero > 0 |
+| `price` | Number | ≥ 0 (default `0`) |
+| `status` | String | `draft` · `published` · `cancelled` · `finished` |
+| `organizer` | ObjectId → `User` | **Referencia** al usuario que lo creó (no se embebe el usuario) |
+
+### Reglas
+
+1. **Organizer automático:** al crear, `organizer` = `req.user.id`. Nunca se toma del body.
+2. **Propiedad:** un `organizer` solo modifica o cambia el estado de **sus** eventos; `admin` puede sobre cualquiera (403 si no).
+3. **Fecha:** no se permite crear (ni reprogramar) un evento con fecha pasada.
+4. **Cupo y precio:** se rechaza `capacity` ≤ 0 (o no entero) y `price` < 0.
+5. **Cancelados:** un evento `cancelled` no se modifica ni cambia de estado (409).
+6. **Publicación:** no se puede publicar un evento `finished` o `cancelled` (409).
+7. **Sin borrado físico:** no existe `DELETE`; cancelar es `PATCH /status` con `cancelled` y el evento queda guardado.
+8. **Borradores:** los eventos `draft` no aparecen en el listado ni en el detalle públicos.
+
+### Transiciones de estado
+
+| Desde \ Hacia | `draft` | `published` | `cancelled` | `finished` |
+|---|:-:|:-:|:-:|:-:|
+| `draft` | — | ✅ | ✅ | ❌ |
+| `published` | ✅ | — | ✅ | ✅ |
+| `cancelled` | ❌ | ❌ | — | ❌ |
+| `finished` | ❌ | ❌ | ❌ | — |
 
 ## Autenticación con Passport.js
 
@@ -243,11 +281,11 @@ const strategies = {
 | POST | `/api/sessions/login` | Login: genera el JWT y setea la cookie `currentUser` | Pública |
 | GET | `/api/sessions/current` | Datos del usuario autenticado (desde el JWT) | 🔒 Autenticado |
 | POST | `/api/sessions/logout` | Cierra sesión (elimina la cookie) | Pública |
-| GET | `/api/events` | Lista de eventos publicados | Pública |
-| GET | `/api/events/:eid` | Detalle de un evento publicado | Pública |
+| GET | `/api/events` | Listado con filtros (`status`, `category`, `location`, `dateFrom`, `dateTo`), paginación (`page`, `limit`) y orden (`sort`) | Pública |
+| GET | `/api/events/:id` | Detalle de un evento (no borrador) | Pública |
 | POST | `/api/events` | Crear evento | 🔒 `organizer`, `admin` |
-| PUT | `/api/events/:eid` | Modificar evento | 🔒 `organizer` dueño, `admin` |
-| PATCH | `/api/events/:eid/cancel` | Cancelar evento | 🔒 `organizer` dueño, `admin` |
+| PUT | `/api/events/:id` | Modificar evento | 🔒 `organizer` dueño, `admin` |
+| PATCH | `/api/events/:id/status` | Cambiar estado (publicar, cancelar, finalizar, borrador) | 🔒 `organizer` dueño, `admin` |
 | GET | `/api/users` | Listar usuarios | 🔒 `admin` |
 | PATCH | `/api/users/:uid/role` | Cambiar el rol de un usuario | 🔒 `admin` |
 
@@ -366,12 +404,25 @@ curl -X POST http://localhost:8080/api/sessions/logout -b cookies.txt -c cookies
 { "status": "success", "message": "Sesión cerrada" }
 ```
 
-### GET /api/events
+### GET /api/events — listado con filtros, paginación y orden
 
-Lista los eventos con `status: "published"`, ordenados por fecha.
+Pública. Por defecto devuelve eventos `published`, página 1, 10 por página, ordenados por fecha ascendente.
+
+**Query params:**
+
+| Parámetro | Valores | Default | Ejemplo |
+|---|---|---|---|
+| `status` | `published` · `cancelled` · `finished` (los `draft` no son públicos) | `published` | `status=published` |
+| `category` | `clase` · `workshop` · `torneo` · `actividad` | — | `category=workshop` |
+| `location` | Texto; coincidencia parcial sin distinguir mayúsculas | — | `location=palermo` |
+| `dateFrom` | Fecha ISO 8601 (desde, inclusive) | — | `dateFrom=2027-06-01` |
+| `dateTo` | Fecha ISO 8601 (hasta, inclusive; si es solo fecha incluye todo el día) | — | `dateTo=2027-06-30` |
+| `page` | Entero ≥ 1 | `1` | `page=2` |
+| `limit` | Entero entre 1 y 50 | `10` | `limit=5` |
+| `sort` | `date` · `price` · `capacity` · `title` · `createdAt`; prefijo `-` = descendente | `date` | `sort=-price` |
 
 ```bash
-curl http://localhost:8080/api/events
+curl "http://localhost:8080/api/events?status=published&category=workshop&page=2&limit=5"
 ```
 
 **200**
@@ -379,29 +430,40 @@ curl http://localhost:8080/api/events
 ```json
 {
   "status": "success",
-  "payload": [
-    {
-      "id": "6aaa9c427b5e7176f002420f",
-      "title": "Spinning intensivo",
-      "description": "Clase de 45 min",
-      "category": "clase",
-      "date": "2027-03-10T19:00:00.000Z",
-      "location": "Sala 2",
-      "capacity": 20,
-      "organizer": "6aaa9c3b7b5e7176f002420c",
-      "status": "published"
-    }
-  ]
+  "payload": {
+    "data": [
+      {
+        "id": "6aaa9e0100611bd738f07ec1",
+        "title": "Workshop de técnica de sentadilla",
+        "description": "Trabajo de técnica y movilidad",
+        "category": "workshop",
+        "date": "2027-06-06T10:00:00.000Z",
+        "location": "Sede Palermo",
+        "capacity": 16,
+        "price": 600,
+        "status": "published",
+        "organizer": "6aaa9c3b7b5e7176f002420c"
+      }
+    ],
+    "page": 2,
+    "limit": 5,
+    "total": 7,
+    "totalPages": 2
+  }
 }
 ```
 
-### GET /api/events/:eid
+**400** si algún parámetro es inválido, con un mensaje que indica cuál (ej. `limit debe ser un entero entre 1 y 50`, `dateFrom no puede ser posterior a dateTo`).
+
+### GET /api/events/:id
+
+Pública. Devuelve cualquier evento que no sea borrador (incluye cancelados y finalizados).
 
 ```bash
-curl http://localhost:8080/api/events/6aaa9c427b5e7176f002420f
+curl http://localhost:8080/api/events/6aaa9dcc00611bd738f07eb4
 ```
 
-**200** → `{ "status": "success", "payload": { ...evento } }` · **400** `ID de evento inválido` · **404** `Evento no encontrado` (también si está cancelado)
+**200** → `{ "status": "success", "payload": { ...evento } }` · **400** `ID de evento inválido` · **404** `Evento no encontrado` (no existe o es `draft`)
 
 ### POST /api/events 🔒 organizer / admin
 
@@ -410,18 +472,20 @@ curl http://localhost:8080/api/events/6aaa9c427b5e7176f002420f
 | Campo | Tipo | Reglas |
 |---|---|---|
 | `title` | string | Obligatorio |
+| `description` | string | Obligatorio |
 | `category` | string | Obligatorio: `clase`, `workshop`, `torneo` o `actividad` |
-| `date` | string (ISO 8601) | Obligatorio, fecha futura |
-| `capacity` | number | Obligatorio, entero > 0 |
-| `description` | string | Opcional |
-| `location` | string | Opcional |
+| `date` | string (ISO 8601) | Obligatorio, **no puede ser pasada** |
+| `location` | string | Obligatorio |
+| `capacity` | number | Obligatorio, entero **> 0** |
+| `price` | number | Opcional, **≥ 0** (default `0`) |
+| `status` | string | Opcional: `draft` o `published` (default `published`) |
 
-El `organizer` se toma del usuario autenticado (no del body) y el `status` inicial es `published`.
+`organizer` se asigna automáticamente con el usuario autenticado; si viene en el body se ignora.
 
 ```bash
 curl -X POST http://localhost:8080/api/events -b cookies.txt \
   -H "Content-Type: application/json" \
-  -d '{"title":"Spinning intensivo","description":"Clase de 45 min","category":"clase","date":"2027-03-10T19:00:00Z","location":"Sala 2","capacity":20}'
+  -d '{"title":"Workshop de movilidad","description":"Técnicas de movilidad articular","category":"workshop","date":"2027-04-15T18:00:00Z","location":"Sala Enjoy Centro","capacity":15,"price":2500}'
 ```
 
 **201**
@@ -430,54 +494,69 @@ curl -X POST http://localhost:8080/api/events -b cookies.txt \
 {
   "status": "success",
   "payload": {
-    "id": "6aaa9c427b5e7176f002420f",
-    "title": "Spinning intensivo",
-    "description": "Clase de 45 min",
-    "category": "clase",
-    "date": "2027-03-10T19:00:00.000Z",
-    "location": "Sala 2",
-    "capacity": 20,
-    "organizer": "6aaa9c3b7b5e7176f002420c",
-    "status": "published"
+    "id": "6aaa9dcc00611bd738f07eb4",
+    "title": "Workshop de movilidad",
+    "description": "Técnicas de movilidad articular",
+    "category": "workshop",
+    "date": "2027-04-15T18:00:00.000Z",
+    "location": "Sala Enjoy Centro",
+    "capacity": 15,
+    "price": 2500,
+    "status": "published",
+    "organizer": "6aaa9c3b7b5e7176f002420c"
   }
 }
 ```
 
-| Código | Caso | Respuesta |
+| Código | Caso | Mensaje |
 |---|---|---|
-| 400 | Faltan campos / datos inválidos | `{ "status": "error", "message": "Faltan campos obligatorios" }` (o el detalle del campo inválido) |
-| 401 | Sin sesión | `{ "status": "error", "message": "No autenticado" }` |
-| 403 | Autenticado como `user` | `{ "status": "error", "message": "No tenés permisos para realizar esta acción" }` |
+| 400 | Falta un campo obligatorio | `Faltan campos obligatorios` |
+| 400 | Fecha pasada | `La fecha del evento no puede ser pasada` |
+| 400 | `capacity` ≤ 0 o no entero | `El cupo (capacity) debe ser un número entero mayor a 0` |
+| 400 | `price` < 0 | `El precio (price) debe ser un número mayor o igual a 0` |
+| 400 | `status` inicial distinto de `draft`/`published` | `Al crear, status debe ser uno de: draft, published` |
+| 401 | Sin sesión | `No autenticado` |
+| 403 | Rol `user` | `No tenés permisos para realizar esta acción` |
 
-### PUT /api/events/:eid 🔒 organizer dueño / admin
+### PUT /api/events/:id 🔒 dueño del evento / admin
 
-Actualiza uno o más de: `title`, `category`, `date`, `capacity`, `description`, `location` (con las mismas reglas que al crear). `organizer` y `status` no se pueden modificar por esta ruta y se ignoran.
+Actualiza uno o más de: `title`, `description`, `category`, `date`, `location`, `capacity`, `price` (con las mismas reglas que al crear). `status` y `organizer` **no** se modifican por esta ruta y se ignoran.
 
 ```bash
-curl -X PUT http://localhost:8080/api/events/6aaa9c427b5e7176f002420f -b cookies.txt \
+curl -X PUT http://localhost:8080/api/events/6aaa9dcc00611bd738f07eb4 -b cookies.txt \
   -H "Content-Type: application/json" \
-  -d '{"capacity":25,"location":"Sala 3"}'
+  -d '{"capacity":20,"price":3000}'
 ```
 
 **200** → `{ "status": "success", "payload": { ...evento actualizado } }`
 
-| Código | Caso | Respuesta |
+| Código | Caso | Mensaje |
 |---|---|---|
-| 400 | ID inválido, datos inválidos o sin campos válidos | `{ "status": "error", "message": "No hay campos válidos para actualizar" }` |
-| 401 | Sin sesión | `{ "status": "error", "message": "No autenticado" }` |
-| 403 | `user`, o `organizer` que no es dueño del evento | `{ "status": "error", "message": "No tenés permisos para realizar esta acción" }` |
-| 404 | El evento no existe | `{ "status": "error", "message": "Evento no encontrado" }` |
-| 409 | El evento está cancelado | `{ "status": "error", "message": "El evento está cancelado" }` |
+| 400 | ID inválido, dato inválido o ningún campo editable | ej. `El cupo (capacity) debe ser un número entero mayor a 0` |
+| 401 | Sin sesión | `No autenticado` |
+| 403 | `user`, u `organizer` que no es dueño | `No tenés permisos para realizar esta acción` |
+| 404 | No existe | `Evento no encontrado` |
+| 409 | Evento cancelado | `Un evento cancelado no puede modificarse` |
 
-### PATCH /api/events/:eid/cancel 🔒 organizer dueño / admin
+### PATCH /api/events/:id/status 🔒 dueño del evento / admin
 
-Cambia el `status` del evento a `cancelled` (deja de aparecer en el listado público).
+**Body (JSON):** `status` (`draft` · `published` · `cancelled` · `finished`).
 
 ```bash
-curl -X PATCH http://localhost:8080/api/events/6aaa9c427b5e7176f002420f/cancel -b cookies.txt
+curl -X PATCH http://localhost:8080/api/events/6aaa9dcc00611bd738f07eb4/status -b cookies.txt \
+  -H "Content-Type: application/json" \
+  -d '{"status":"cancelled"}'
 ```
 
-**200** → `{ "status": "success", "payload": { ..., "status": "cancelled" } }` · mismos errores que `PUT` (409 si ya estaba cancelado)
+**200** → `{ "status": "success", "payload": { ..., "status": "cancelled" } }`
+
+| Código | Caso | Mensaje |
+|---|---|---|
+| 400 | Estado inexistente | `status debe ser uno de: draft, published, cancelled, finished` |
+| 401 / 403 / 404 | Igual que `PUT` | — |
+| 409 | El evento está cancelado | `Un evento cancelado no puede modificarse` |
+| 409 | Publicar un evento finalizado | `No se puede publicar un evento finalizado o cancelado` |
+| 409 | Transición no permitida (ej. `draft` → `finished`) o mismo estado | `No se puede cambiar un evento de "draft" a "finished"` |
 
 ### GET /api/users 🔒 admin
 
@@ -546,9 +625,16 @@ curl -X PATCH http://localhost:8080/api/users/6aaa8db17e684a75b105eda7/role -b c
 | 14 | `POST /api/events` como `organizer` / `admin` | 201 |
 | 15 | `GET /api/users` como `organizer` | 403 |
 | 16 | `GET /api/users` como `admin` | 200 (sin `password`) |
-| 17 | `PUT` / `PATCH cancel` de un evento ajeno como `organizer` | 403 |
+| 17 | `PUT` / `PATCH status` de un evento ajeno como `organizer` | 403 |
 | 18 | `PUT` de un evento ajeno como `admin` | 200 |
 | 19 | `PATCH /api/users/:uid/role` como `organizer` | 403 |
+| 20 | Crear evento con fecha pasada | 400 |
+| 21 | Crear evento con `capacity: 0` o `price` negativo | 400 |
+| 22 | `PUT` de evento propio como `organizer` | 200 |
+| 23 | Cambiar estado o modificar un evento cancelado | 409 |
+| 24 | Publicar un evento finalizado | 409 |
+| 25 | `GET /api/events?status=published&category=workshop&page=2&limit=5` | 200 con `data`, `page`, `limit`, `total`, `totalPages` |
+| 26 | `GET` / `PUT` de un evento inexistente | 404 |
 
 ## Avance
 
@@ -559,4 +645,5 @@ curl -X PATCH http://localhost:8080/api/users/6aaa8db17e684a75b105eda7/role -b c
 | 3 | Autenticación con JWT y cookies (login, current, logout) | ✅ |
 | 4 | Autenticación centralizada con Passport.js (estrategias register, login, current) | ✅ |
 | 5 | Roles y autorización (matriz de permisos, 401 vs 403, propiedad de eventos) | ✅ |
-| 6 – 8 | — | ⏳ Pendientes |
+| 6 | Entidad events: CRUD, reglas de negocio, filtros, paginación y ordenamiento | ✅ |
+| 7 – 8 | — | ⏳ Pendientes |

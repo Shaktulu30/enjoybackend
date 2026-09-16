@@ -20,7 +20,7 @@ const authorizeOwnership = ({ loadResource, ownerField, bypassRoles }) => async 
 };
 
 export const authorizeEventOwner = authorizeOwnership({
-  loadResource: (req) => findEventById(req.params.eid),
+  loadResource: (req) => findEventById(req.params.id),
   ownerField: 'organizer',
   bypassRoles: PERMISSIONS.EVENTS_MANAGE_ANY,
 });

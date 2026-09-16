@@ -6,6 +6,7 @@ export const toPublicEvent = (event) => ({
   date: event.date,
   location: event.location,
   capacity: event.capacity,
-  organizer: event.organizer.toString(),
+  price: event.price,
   status: event.status,
+  organizer: event.organizer.toString(),
 });

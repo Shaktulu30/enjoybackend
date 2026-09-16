@@ -3,8 +3,8 @@ import { sendSuccess } from '../utils/response.js';
 
 export const getEvents = async (req, res, next) => {
   try {
-    const events = await eventsService.getPublishedEvents();
-    return sendSuccess(res, { payload: events });
+    const result = await eventsService.listEvents(req.query);
+    return sendSuccess(res, { payload: result });
   } catch (error) {
     return next(error);
   }
@@ -12,7 +12,7 @@ export const getEvents = async (req, res, next) => {
 
 export const getEventById = async (req, res, next) => {
   try {
-    const event = await eventsService.getPublishedEventById(req.params.eid);
+    const event = await eventsService.getPublicEventById(req.params.id);
     return sendSuccess(res, { payload: event });
   } catch (error) {
     return next(error);
@@ -37,9 +37,9 @@ export const updateEvent = async (req, res, next) => {
   }
 };
 
-export const cancelEvent = async (req, res, next) => {
+export const changeEventStatus = async (req, res, next) => {
   try {
-    const event = await eventsService.cancelEvent(req.resource);
+    const event = await eventsService.changeEventStatus(req.resource, req.body?.status);
     return sendSuccess(res, { payload: event });
   } catch (error) {
     return next(error);

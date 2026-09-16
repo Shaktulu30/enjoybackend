@@ -9,8 +9,8 @@ class EventRepository {
     return this.dao.create(data);
   }
 
-  getByStatus(status) {
-    return this.dao.findByStatus(status);
+  paginate(criteria, options) {
+    return this.dao.paginate(criteria, options);
   }
 
   getById(id) {
