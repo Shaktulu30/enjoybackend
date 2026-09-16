@@ -1,0 +1,28 @@
+{
+  "name": "enjoy-eventos",
+  "version": "0.1.0",
+  "description": "Plataforma de Eventos e Inscripciones para las clases y eventos del gimnasio Enjoy - Proyecto integrador Programación Backend II (CoderHouse)",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js"
+  },
+  "keywords": [
+    "node",
+    "express",
+    "mongodb",
+    "mongoose",
+    "jwt",
+    "passport",
+    "coderhouse"
+  ],
+  "author": "",
+  "license": "ISC",
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.14"
+  }
+}
