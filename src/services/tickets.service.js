@@ -1,12 +1,15 @@
 import { ticketRepository } from '../repositories/ticket.repository.js';
 import { eventRepository } from '../repositories/event.repository.js';
 import { userRepository } from '../repositories/user.repository.js';
-import { runInTransaction } from '../repositories/transaction.js';
-import { EVENT_STATUS } from '../models/event.model.js';
-import { TICKET_STATUS } from '../models/ticket.model.js';
+import { transactionRepository } from '../repositories/transaction.repository.js';
+import { EVENT_STATUS } from '../constants/event.constants.js';
+import { TICKET_STATUS } from '../constants/ticket.constants.js';
+import { MESSAGES } from '../constants/messages.js';
+import { PERMISSIONS } from '../config/roles.js';
 import { toTicket, toMyTicket, toEventAttendeeTicket } from '../dto/ticket.dto.js';
 import { sendEnrollmentConfirmation } from './mail.service.js';
 import { AppError } from '../utils/AppError.js';
+import { isOwnerOrPrivileged } from '../utils/permissions.js';
 import { generateReservationCode } from '../utils/reservationCode.js';
 import { isPositiveInteger, isValidObjectId } from '../utils/validators.js';
 
@@ -42,7 +45,7 @@ const assertSeatsAvailable = (event, occupied, quantity) => {
 
 const notifyEnrollment = async (userId, event, ticket) => {
   try {
-    const user = await userRepository.getById(userId);
+    const user = await userRepository.findById(userId);
     await sendEnrollmentConfirmation({ user, event, ticket });
   } catch (error) {
     console.error(`No se pudo enviar el email de confirmación del ticket ${ticket.reservationCode}:`, error.message);
@@ -57,11 +60,11 @@ export const enroll = async (eventId, userId, body) => {
   let enrolledEvent;
   let ticket;
   try {
-    await runInTransaction(async (session) => {
+    await transactionRepository.run(async (session) => {
       const event = await eventRepository.lockForEnrollment(eventId, session);
       assertEventOpenForEnrollment(event);
 
-      if (await ticketRepository.getActiveByUserAndEvent(userId, eventId, session)) {
+      if (await ticketRepository.findActiveByUserAndEvent(userId, eventId, session)) {
         throw new AppError(DUPLICATE_TICKET_MESSAGE, 409);
       }
 
@@ -91,13 +94,13 @@ export const enroll = async (eventId, userId, body) => {
 };
 
 export const getMyTickets = async (userId) => {
-  const tickets = await ticketRepository.getByUserWithEvent(userId);
+  const tickets = await ticketRepository.findByUserWithEvent(userId);
   return tickets.map(toMyTicket);
 };
 
 export const getEventTickets = async (event) => {
   const [tickets, occupied] = await Promise.all([
-    ticketRepository.getByEventWithUser(event._id),
+    ticketRepository.findByEventWithAttendees(event._id),
     ticketRepository.countOccupiedSeats(event._id),
   ]);
   return {
@@ -113,17 +116,21 @@ export const getEventTickets = async (event) => {
   };
 };
 
-export const findTicketById = async (id) => {
+// Permiso sobre recurso propio: el dueño del ticket o un rol con permiso sobre cualquier ticket (admin).
+export const getCancellableTicket = async (id, user) => {
   if (!isValidObjectId(id)) throw new AppError('ID de ticket inválido', 400);
-  const ticket = await ticketRepository.getById(id);
+  const ticket = await ticketRepository.findById(id);
   if (!ticket) throw new AppError('Ticket no encontrado', 404);
+  if (!isOwnerOrPrivileged(ticket.user, user, PERMISSIONS.TICKETS_CANCEL_ANY)) {
+    throw new AppError(MESSAGES.FORBIDDEN, 403);
+  }
   return ticket;
 };
 
 // Cancelar no borra el ticket: cambia el estado y registra cancelledAt. El cupo se libera porque ya no se cuenta.
 export const cancelTicket = async (ticket) => {
   if (ticket.status === TICKET_STATUS.CANCELLED) throw new AppError('El ticket ya está cancelado', 409);
-  const cancelled = await ticketRepository.cancel(ticket._id);
+  const cancelled = await ticketRepository.cancelTicket(ticket._id);
   if (!cancelled) throw new AppError('El ticket ya está cancelado', 409);
   return toTicket(cancelled);
 };

@@ -16,7 +16,7 @@ const run = async () => {
   validateEnv();
   await connectDB();
 
-  const user = await userRepository.getByEmail(normalizeEmail(email));
+  const user = await userRepository.findByEmail(normalizeEmail(email));
   if (!user) throw new Error(`No existe un usuario con email ${email}`);
 
   await userRepository.updateRole(user._id, role);

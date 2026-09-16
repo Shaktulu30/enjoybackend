@@ -1,7 +1,10 @@
 import { eventRepository } from '../repositories/event.repository.js';
-import { EVENT_CATEGORIES, EVENT_STATUS } from '../models/event.model.js';
+import { EVENT_CATEGORIES, EVENT_STATUS, EVENT_STATUS_VALUES } from '../constants/event.constants.js';
+import { MESSAGES } from '../constants/messages.js';
+import { PERMISSIONS } from '../config/roles.js';
 import { toPublicEvent } from '../dto/event.dto.js';
 import { AppError } from '../utils/AppError.js';
+import { isOwnerOrPrivileged } from '../utils/permissions.js';
 import {
   isDateOnly,
   isNonEmptyString,
@@ -27,6 +30,7 @@ const STATUS_TRANSITIONS = {
   [FINISHED]: [],
 };
 
+const LIST_QUERY_PARAMS = ['status', 'category', 'location', 'dateFrom', 'dateTo', 'page', 'limit', 'sort'];
 const SORTABLE_FIELDS = ['date', 'price', 'capacity', 'title', 'createdAt'];
 const DEFAULT_PAGE = 1;
 const DEFAULT_LIMIT = 10;
@@ -90,8 +94,6 @@ const assertStatusTransition = (event, nextStatus) => {
 
 // ---------- Listado ----------
 
-const LIST_QUERY_PARAMS = ['status', 'category', 'location', 'dateFrom', 'dateTo', 'page', 'limit', 'sort'];
-
 const parseListQuery = (query) => {
   const repeated = LIST_QUERY_PARAMS.find((param) => query[param] !== undefined && typeof query[param] !== 'string');
   if (repeated) throw new AppError(`El parámetro ${repeated} debe enviarse una sola vez`, 400);
@@ -129,27 +131,27 @@ const parseListQuery = (query) => {
 
   return {
     criteria: { status, category, location: location?.trim(), dateFrom: from, dateTo: to },
-    options: { page, limit, sortField, sortDirection },
+    pagination: { page, limit, sortField, sortDirection },
   };
 };
 
 // ---------- Casos de uso ----------
 
 export const listEvents = async (query) => {
-  const { criteria, options } = parseListQuery(query);
-  const { docs, total } = await eventRepository.paginate(criteria, options);
+  const { criteria, pagination } = parseListQuery(query);
+  const { events, total } = await eventRepository.findEvents(criteria, pagination);
   return {
-    data: docs.map(toPublicEvent),
-    page: options.page,
-    limit: options.limit,
+    data: events.map(toPublicEvent),
+    page: pagination.page,
+    limit: pagination.limit,
     total,
-    totalPages: Math.ceil(total / options.limit),
+    totalPages: Math.ceil(total / pagination.limit),
   };
 };
 
 export const findEventById = async (id) => {
   if (!isValidObjectId(id)) throw new AppError('ID de evento inválido', 400);
-  const event = await eventRepository.getById(id);
+  const event = await eventRepository.findById(id);
   if (!event) throw new AppError('Evento no encontrado', 404);
   return event;
 };
@@ -160,9 +162,18 @@ export const getPublicEventById = async (id) => {
   return toPublicEvent(event);
 };
 
+// Permiso sobre recurso propio: el organizer dueño o un rol con permiso sobre cualquier evento (admin).
+export const getManageableEvent = async (id, user) => {
+  const event = await findEventById(id);
+  if (!isOwnerOrPrivileged(event.organizer, user, PERMISSIONS.EVENTS_MANAGE_ANY)) {
+    throw new AppError(MESSAGES.FORBIDDEN, 403);
+  }
+  return event;
+};
+
 export const createEvent = async (data, organizerId) => {
   if (!data || REQUIRED_FIELDS.some((field) => data[field] === undefined || data[field] === null || data[field] === '')) {
-    throw new AppError('Faltan campos obligatorios', 400);
+    throw new AppError(MESSAGES.MISSING_FIELDS, 400);
   }
 
   const status = data.status ?? PUBLISHED;
@@ -189,8 +200,8 @@ export const updateEvent = async (event, data) => {
 };
 
 export const changeEventStatus = async (event, nextStatus) => {
-  if (!Object.values(EVENT_STATUS).includes(nextStatus)) {
-    throw new AppError(`status debe ser uno de: ${Object.values(EVENT_STATUS).join(', ')}`, 400);
+  if (!EVENT_STATUS_VALUES.includes(nextStatus)) {
+    throw new AppError(`status debe ser uno de: ${EVENT_STATUS_VALUES.join(', ')}`, 400);
   }
   assertStatusTransition(event, nextStatus);
   const updated = await eventRepository.update(event._id, { status: nextStatus });

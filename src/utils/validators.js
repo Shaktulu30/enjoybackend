@@ -1,7 +1,6 @@
-import mongoose from 'mongoose';
-
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const DATE_ONLY_REGEX = /^\d{4}-\d{2}-\d{2}$/;
+const OBJECT_ID_REGEX = /^[a-f\d]{24}$/i;
 
 export const PASSWORD_MIN_LENGTH = 8;
 export const PASSWORD_MAX_BYTES = 72;
@@ -12,7 +11,7 @@ export const normalizeEmail = (email) => email.trim().toLowerCase();
 
 export const isValidEmail = (email) => EMAIL_REGEX.test(email);
 
-export const isValidObjectId = (id) => mongoose.isObjectIdOrHexString(id);
+export const isValidObjectId = (id) => typeof id === 'string' && OBJECT_ID_REGEX.test(id);
 
 export const isPositiveInteger = (value) => Number.isInteger(value) && value > 0;
 

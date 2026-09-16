@@ -4,7 +4,7 @@ Proyecto integrador de la materia **Programación Backend II** (CoderHouse).
 
 API REST para gestionar las **clases y eventos del gimnasio Enjoy**: los organizadores (profes) crean eventos — clases, workshops, torneos o actividades — y los usuarios se inscriben ocupando un cupo.
 
-> 🚧 **Estado:** Pre-entrega 7 — tickets: inscripciones con control de cupos, cancelaciones y email de confirmación. Las funcionalidades se agregan en cada pre-entrega (ver [Avance](#avance)).
+> 🚧 **Estado:** Pre-entrega 8 — arquitectura formal en capas con DAO, Repository y DTO. Las funcionalidades se agregan en cada pre-entrega (ver [Avance](#avance)).
 
 ## Tecnologías
 
@@ -84,57 +84,156 @@ src/
 │   ├── db.js                  # Conexión a MongoDB Atlas con Mongoose
 │   ├── cookie.js              # Nombre y opciones de la cookie de autenticación
 │   ├── mailer.js              # Transporter SMTP de Nodemailer (desde variables MAIL_*)
-│   ├── passport.config.js     # Estrategias de Passport: register, login y current
+│   ├── passport.config.js     # Estrategias de Passport (adaptadores a sessions.service)
 │   └── roles.js               # Roles y matriz de permisos (PERMISSIONS)
-├── routes/
+├── constants/
+│   ├── event.constants.js     # Categorías y estados de eventos
+│   ├── ticket.constants.js    # Estados de tickets y estados que ocupan cupo
+│   └── messages.js            # Mensajes de error compartidos
+├── routes/                    # Método + path → middlewares → controller
 │   ├── index.js               # Router principal montado en /api
 │   ├── health.router.js
 │   ├── events.router.js
 │   ├── sessions.router.js
 │   ├── tickets.router.js
-│   └── users.router.js        # Rutas administrativas
-├── controllers/               # Manejo de request/response
+│   └── users.router.js
+├── middlewares/
+│   ├── auth.middleware.js     # authenticate (401) y passportCall
+│   ├── authorize.middleware.js # authorize(roles permitidos) (403)
+│   ├── ownership.middleware.js # Carga recursos propios vía services (404 / 403)
+│   ├── notFound.middleware.js
+│   └── errorHandler.middleware.js # Manejo centralizado de errores
+├── controllers/               # Solo request/response
 │   ├── health.controller.js
 │   ├── events.controller.js
 │   ├── sessions.controller.js # Genera el JWT y maneja la cookie tras la autenticación
 │   ├── tickets.controller.js
 │   └── users.controller.js
-├── services/                  # Lógica de negocio (validaciones, reglas)
-│   ├── events.service.js
-│   ├── mail.service.js        # Email de confirmación de inscripción
-│   ├── tickets.service.js     # Inscripción, cupos, duplicados y cancelación
-│   └── users.service.js
-├── repositories/              # Acceso a datos desacoplado de la persistencia
+├── services/                  # Lógica de negocio
+│   ├── sessions.service.js    # Registro y validación de credenciales
+│   ├── events.service.js      # CRUD, estados, filtros y permisos sobre eventos propios
+│   ├── tickets.service.js     # Inscripción, cupos, duplicados, cancelación y permisos sobre tickets propios
+│   ├── users.service.js       # Listado de usuarios y cambio de rol
+│   └── mail.service.js        # Email de confirmación de inscripción
+├── repositories/              # Métodos de dominio sobre los DAO
+│   ├── user.repository.js
 │   ├── event.repository.js
 │   ├── ticket.repository.js
-│   ├── transaction.js         # runInTransaction (transacciones de MongoDB)
-│   └── user.repository.js
-├── dao/                       # Operaciones concretas contra MongoDB
-│   ├── event.dao.js
-│   ├── ticket.dao.js
-│   └── user.dao.js
-├── dto/                       # Objetos de salida (qué datos se exponen)
+│   └── transaction.repository.js
+├── dao/                       # Únicos que importan modelos de Mongoose
+│   ├── base.dao.js            # BaseDAO: create, findById, findOne, find, count, sum, updateById, updateOne
+│   ├── user.dao.js            # UserDAO
+│   ├── event.dao.js           # EventDAO
+│   ├── ticket.dao.js          # TicketDAO
+│   └── transaction.dao.js     # Transacciones de MongoDB
+├── dto/                       # Qué datos expone cada respuesta
+│   ├── user.dto.js
 │   ├── event.dto.js
-│   ├── ticket.dto.js
-│   └── user.dto.js
+│   └── ticket.dto.js
 ├── models/                    # Esquemas de Mongoose
 │   ├── user.model.js
 │   ├── event.model.js
 │   └── ticket.model.js
-├── middlewares/
-│   ├── auth.middleware.js     # authenticate (401) y passportCall
-│   ├── authorize.middleware.js # authorize(roles permitidos) (403)
-│   ├── ownership.middleware.js # authorizeEventOwner / authorizeTicketOwner: dueño o admin (403)
-│   ├── notFound.middleware.js
-│   └── errorHandler.middleware.js
 └── utils/
-    ├── response.js            # Helpers de respuesta con formato uniforme
+    ├── AppError.js            # Error con código HTTP
+    ├── response.js            # sendSuccess / sendError con formato uniforme
     ├── hash.js                # createHash / isValidPassword (bcrypt)
     ├── jwt.js                 # generateToken (lo usa el controller de login)
+    ├── permissions.js         # isOwnerOrPrivileged (dueño o rol con permiso global)
     ├── reservationCode.js     # Código de reserva de los tickets
-    ├── validators.js          # Validación y normalización de datos
-    └── AppError.js            # Error con código HTTP
+    └── validators.js          # Validación y normalización de datos
 ```
+
+## Arquitectura en capas
+
+Cada request atraviesa capas con una única responsabilidad. Cada capa solo conoce a la de abajo:
+
+```
+HTTP request
+   │
+   ▼
+routes/          Define método + path y encadena middlewares y controller
+   │
+middlewares/     authenticate (401) · authorize (403) · ownership (404/403) · errorHandler
+   │
+controllers/     Extrae body/params/query, llama al service, responde con sendSuccess
+   │
+services/        Lógica de negocio: validaciones, cupos, estados, duplicados, permisos sobre recursos propios, email
+   │
+repositories/    Métodos de dominio (findByEmail, findEvents, countOccupiedSeats, cancelTicket…)
+   │
+dao/             Acceso genérico a MongoDB (findById, findOne, find, create, updateById, count, sum)
+   │
+models/          Esquemas de Mongoose
+   │
+   ▼
+MongoDB Atlas
+```
+
+Las respuestas salen de los services ya convertidas por un **DTO** (`dto/`), así nunca se expone un documento crudo.
+
+### Responsabilidad de cada capa
+
+| Capa | Archivos | Responsabilidad | Puede importar | No puede |
+|---|---|---|---|---|
+| **Routes** | `routes/*.router.js` | Asociar método + path con middlewares y controller | controllers, middlewares, `config/roles.js` | Tener lógica, hablar con la base |
+| **Middlewares** | `middlewares/*.js` | Autenticación (401), autorización por rol (403), carga de recursos propios, 404 de rutas y manejo centralizado de errores | services, `AppError` | Importar modelos, DAOs o repositories |
+| **Controllers** | `controllers/*.controller.js` | Coordinar request/response: extraer datos, llamar al service, devolver `{ status, payload/message }` | services, DTOs, utils de respuesta | Importar modelos, DAOs o repositories; validar reglas de negocio |
+| **Services** | `services/*.service.js` | Toda la lógica de negocio: validaciones, cupos, transiciones de estado, duplicados, permisos sobre recursos propios, envío de email, armado de DTOs | repositories, DTOs, constants, utils | Importar modelos, DAOs o Mongoose |
+| **Repositories** | `repositories/*.repository.js` | Traducir necesidades del dominio a consultas: filtros, orden, paginación, `populate` con campos seleccionados, suma de cupos, cancelación lógica | su DAO, constants | Importar modelos; conocer reglas de negocio o HTTP |
+| **DAO** | `dao/*.dao.js` | Operaciones genéricas sobre un modelo (`BaseDAO`): `create`, `findById`, `findOne`, `find`, `count`, `sum`, `updateById`, `updateOne`; transacciones | modelos, Mongoose | Conocer reglas de negocio |
+| **Models** | `models/*.model.js` | Esquema, validaciones de persistencia e índices | Mongoose, constants | — |
+| **DTO** | `dto/*.dto.js` | Definir qué datos se exponen en cada respuesta | — | Incluir `password` o datos no pedidos |
+
+**Regla clave:** los **DAO son los únicos que importan modelos de Mongoose**. Services y controllers nunca los ven.
+
+### DAO
+
+`BaseDAO` (`dao/base.dao.js`) implementa las operaciones genéricas y devuelve objetos planos (`lean`). Hay un DAO por entidad, que solo le indica el modelo:
+
+| DAO | Modelo |
+|---|---|
+| `UserDAO` | `User` |
+| `EventDAO` | `Event` |
+| `TicketDAO` | `Ticket` |
+
+`dao/transaction.dao.js` envuelve las transacciones de MongoDB (usadas en la inscripción).
+
+### Repositories
+
+| Repository | Métodos de dominio |
+|---|---|
+| `UserRepository` | `create`, `findById`, `findByEmail`, `findByEmailWithPassword` (único que trae el hash, solo para login), `findAll`, `updateRole` |
+| `EventRepository` | `create`, `findById`, `findEvents` (filtros + paginación + orden), `update`, `lockForEnrollment` |
+| `TicketRepository` | `create`, `findById`, `findActiveByUserAndEvent`, `countOccupiedSeats`, `findByUserWithEvent`, `findByEventWithAttendees`, `cancelTicket` |
+| `TransactionRepository` | `run(work)` |
+
+### DTO
+
+| DTO | Archivo | Se usa en | Campos |
+|---|---|---|---|
+| `toSessionUser` | `user.dto.js` | Login (payload del JWT) y `GET /api/sessions/current` | `id`, `email`, `role` |
+| `toPublicUser` | `user.dto.js` | Registro, `GET /api/users`, cambio de rol | `id`, `first_name`, `last_name`, `email`, `role` |
+| `toPublicEvent` | `event.dto.js` | Todas las respuestas de eventos | `id`, `title`, `description`, `category`, `date`, `location`, `capacity`, `price`, `status`, `organizer` (solo el id) |
+| `toTicket` | `ticket.dto.js` | Inscripción y cancelación | datos del ticket + ids de `event` y `user` |
+| `toMyTicket` | `ticket.dto.js` | `GET /api/tickets/my-tickets` | datos del ticket + evento populado filtrado a `id`, `title`, `date`, `location`, `status` |
+| `toEventAttendeeTicket` | `ticket.dto.js` | `GET /api/events/:eid/tickets` | datos del ticket + usuario populado filtrado a `id`, `first_name`, `last_name`, `email` |
+
+Ninguna respuesta incluye `password`. Además, el campo tiene `select: false` en el modelo y los `populate` piden solo los campos necesarios: el filtro se aplica tanto en la consulta como en el DTO.
+
+### Manejo de errores
+
+- Los services lanzan `AppError(message, statusCode)`; los middlewares también generan `AppError` para 401, 403 y 404.
+- Todos los errores llegan a **un único middleware** (`middlewares/errorHandler.middleware.js`), que responde siempre `{ "status": "error", "message": "..." }`:
+
+| Código | Origen |
+|---|---|
+| 400 | Datos inválidos (`AppError`), JSON mal formado, errores de validación o cast de Mongoose |
+| 401 | Sin sesión o token inválido (`authenticate`), credenciales inválidas (login) |
+| 403 | Rol sin permiso (`authorize`) o recurso ajeno (services de eventos y tickets) |
+| 404 | Recurso inexistente (services) o ruta inexistente (`notFound`) |
+| 409 | Conflictos de negocio: email duplicado, inscripción duplicada, sin cupo, evento cancelado, transición de estado inválida; clave duplicada en MongoDB |
+| 500 | Solo errores no previstos: se registran en consola y el cliente recibe `Error interno del servidor` |
 
 ## Modelos
 
@@ -189,8 +288,8 @@ authenticate  →  authorize(PERMISSIONS.X)  →  authorizeEventOwner (si aplica
 |---|---|---|---|
 | `authenticate` | `auth.middleware.js` | Lee el JWT de la cookie `currentUser` (estrategia Passport `current`), lo valida y deja `{ id, email, role }` en `req.user` | **401** `No autenticado` |
 | `authorize(roles)` | `authorize.middleware.js` | Recibe los roles permitidos y los compara con `req.user.role` | **403** `No tenés permisos para realizar esta acción` |
-| `authorizeEventOwner(param)` | `ownership.middleware.js` | Carga el evento; deja pasar si `req.user` es su `organizer` o si su rol está en `EVENTS_MANAGE_ANY` (admin) | **404** si no existe · **403** si es ajeno |
-| `authorizeTicketOwner` | `ownership.middleware.js` | Carga el ticket; deja pasar si `req.user` es su `user` o si su rol está en `TICKETS_CANCEL_ANY` (admin) | **404** si no existe · **403** si es ajeno |
+| `authorizeEventOwner(param)` | `ownership.middleware.js` | Pide el evento a `events.service` (`getManageableEvent`), que verifica que `req.user` sea su `organizer` o tenga un rol de `EVENTS_MANAGE_ANY` (admin) | **404** si no existe · **403** si es ajeno |
+| `authorizeTicketOwner` | `ownership.middleware.js` | Pide el ticket a `tickets.service` (`getCancellableTicket`), que verifica que `req.user` sea su dueño o tenga un rol de `TICKETS_CANCEL_ANY` (admin) | **404** si no existe · **403** si es ajeno |
 
 ```js
 // src/routes/events.router.js
@@ -209,7 +308,7 @@ El rol se toma del JWT: si un admin cambia el rol de un usuario, este debe volve
 
 ## Eventos: reglas de negocio
 
-Todas estas validaciones viven en `src/services/events.service.js` (no en rutas ni controllers). La autorización (rol y dueño) la resuelven los middlewares antes de llegar al servicio.
+Todas estas validaciones viven en `src/services/events.service.js` (no en rutas ni controllers). El control por rol lo hace `authorize`; la verificación de dueño la decide el servicio (`getManageableEvent`) y la invoca `ownership.middleware` antes del controller.
 
 ### Modelo
 
@@ -322,6 +421,8 @@ cupos disponibles = event.capacity − cupos ocupados
 
 Toda la autenticación pasa por estrategias de Passport definidas en **`src/config/passport.config.js`**. `app.js` solo registra las estrategias (`initializePassport()`) y ejecuta `passport.initialize()`. No se usan sesiones de servidor (`session: false`): el estado viaja en el JWT.
 
+Las estrategias son adaptadores delgados: `register` y `login` delegan en `services/sessions.service.js` (`registerUser`, `validateCredentials`), que concentra la validación, bcrypt y la unicidad del email usando `UserRepository`. Si el servicio lanza un error, Passport lo pasa al middleware centralizado de errores.
+
 Las rutas delegan en la estrategia correspondiente mediante `passportCall(nombre)` (`middlewares/auth.middleware.js`), un envoltorio de `passport.authenticate(nombre, { session: false }, callback)` que deja el usuario autenticado en `req.user` y convierte los fallos al formato `{ status: "error", message }`.
 
 ```
@@ -335,9 +436,9 @@ POST /logout   → controller.logout (no pasa por Passport)         → borra la
 
 | Estrategia | Tipo | Qué hace | Fallos |
 |---|---|---|---|
-| `register` | `passport-local` (`usernameField: email`) | Valida campos obligatorios, formato de email y largo de contraseña; normaliza el email (trim + minúsculas); verifica unicidad; hashea con bcrypt; crea el usuario con rol por defecto `user` (el `role` del body se ignora). Devuelve el usuario **sin password**. | 400 `Faltan campos obligatorios` · 400 contraseña corta · 409 `El email ya está registrado` |
-| `login` | `passport-local` (`usernameField: email`) | Busca el usuario por email normalizado y compara la contraseña con bcrypt. Devuelve `{ id, email, role }`. **No genera el JWT**: eso lo hace el controller. | 400 `Faltan campos obligatorios` · 401 `Credenciales inválidas` (siempre el mismo mensaje) |
-| `current` | `passport-jwt` | Extrae el token de la cookie `currentUser`, verifica firma (`JWT_SECRET`, HS256) y expiración, y deja `{ id, email, role }` en `req.user`. | 401 `No autenticado` (sin cookie, token inválido, manipulado o expirado) |
+| `register` | `passport-local` (`usernameField: email`) → `registerUser` | Valida campos obligatorios, formato de email y largo de contraseña; normaliza el email (trim + minúsculas); verifica unicidad; hashea con bcrypt; crea el usuario con rol por defecto `user` (el `role` del body se ignora). Devuelve el usuario **sin password**. | 400 `Faltan campos obligatorios` · 400 contraseña corta · 409 `El email ya está registrado` |
+| `login` | `passport-local` (`usernameField: email`) → `validateCredentials` | Busca el usuario por email normalizado y compara la contraseña con bcrypt. Devuelve `{ id, email, role }`. **No genera el JWT**: eso lo hace el controller. | 400 `Faltan campos obligatorios` · 401 `Credenciales inválidas` (siempre el mismo mensaje) |
+| `current` | `passport-jwt` | Extrae el token de la cookie `currentUser`, verifica firma (`JWT_SECRET`, HS256) y expiración, y deja `{ id, email, role }` (DTO `toSessionUser`) en `req.user`. | 401 `No autenticado` (sin cookie, token inválido, manipulado o expirado) |
 
 ### JWT y cookie
 
@@ -893,6 +994,10 @@ curl -X PATCH http://localhost:8080/api/users/6aaa8db17e684a75b105eda7/role -b c
 | 34 | Cancelar ticket ajeno como `user` | 403 |
 | 35 | `GET /api/events/:eid/tickets` como `user` / como organizer de otro evento | 403 / 403 |
 | 36 | 12 inscripciones simultáneas a un evento con cupo 5 | 5 × 201 y 7 × 409 |
+| 37 | Flujo completo: registro → login → crear evento → inscribirse → mis tickets → cancelar | 201 → 200 → 201 → 201 → 200 → 200 |
+| 38 | `/current`, `my-tickets` y `events/:eid/tickets` (con populate) | Sin `password` en ninguna respuesta |
+| 39 | Error de negocio (ej. sin cupo, evento cancelado) | 409, nunca 500 |
+| 40 | Refactor de la Pre-entrega 8 | Las mismas 84 llamadas a la API devuelven respuestas idénticas antes y después |
 
 ## Avance
 
@@ -905,4 +1010,4 @@ curl -X PATCH http://localhost:8080/api/users/6aaa8db17e684a75b105eda7/role -b c
 | 5 | Roles y autorización (matriz de permisos, 401 vs 403, propiedad de eventos) | ✅ |
 | 6 | Entidad events: CRUD, reglas de negocio, filtros, paginación y ordenamiento | ✅ |
 | 7 | Tickets: inscripciones, control de cupos, cancelaciones y email con Nodemailer | ✅ |
-| 8 | — | ⏳ Pendiente |
+| 8 | Arquitectura en capas: DAO, Repository y DTO, manejo centralizado de errores | ✅ |

@@ -9,24 +9,25 @@ class UserRepository {
     return this.dao.create(data);
   }
 
-  getAll() {
-    return this.dao.findAll();
-  }
-
-  getById(id) {
+  findById(id) {
     return this.dao.findById(id);
   }
 
-  getByEmail(email) {
-    return this.dao.findByEmail(email);
+  findByEmail(email) {
+    return this.dao.findOne({ email });
   }
 
-  getByEmailWithPassword(email) {
-    return this.dao.findByEmailWithPassword(email);
+  // Única consulta que trae el hash de la contraseña (select: false en el modelo): solo para validar el login.
+  findByEmailWithPassword(email) {
+    return this.dao.findOne({ email }, { select: '+password' });
+  }
+
+  findAll() {
+    return this.dao.find({}, { sort: { createdAt: 1 } });
   }
 
   updateRole(id, role) {
-    return this.dao.updateRoleById(id, role);
+    return this.dao.updateById(id, { role });
   }
 }
 

@@ -1,19 +1,11 @@
-import { PERMISSIONS } from '../config/roles.js';
-import { findEventById } from '../services/events.service.js';
-import { findTicketById } from '../services/tickets.service.js';
-import { sendError } from '../utils/response.js';
-import { FORBIDDEN_MESSAGE } from './authorize.middleware.js';
+import { getManageableEvent } from '../services/events.service.js';
+import { getCancellableTicket } from '../services/tickets.service.js';
 
-// Carga el recurso y permite continuar solo si req.user es su dueño o tiene un rol con permiso sobre cualquier recurso.
-// El recurso cargado queda en req.resource para que el controller no lo vuelva a buscar.
-const authorizeOwnership = ({ loadResource, ownerField, bypassRoles }) => async (req, res, next) => {
+// Carga el recurso a través del servicio (que decide si req.user puede actuar sobre él) y lo deja en req.resource.
+// Los errores (400 / 404 / 403) siguen al middleware centralizado.
+const loadAuthorizedResource = (load) => async (req, res, next) => {
   try {
-    const resource = await loadResource(req);
-    const isOwner = resource[ownerField]?.toString() === req.user.id;
-    if (!isOwner && !bypassRoles.includes(req.user.role)) {
-      return sendError(res, FORBIDDEN_MESSAGE, 403);
-    }
-    req.resource = resource;
+    req.resource = await load(req);
     return next();
   } catch (error) {
     return next(error);
@@ -22,15 +14,7 @@ const authorizeOwnership = ({ loadResource, ownerField, bypassRoles }) => async 
 
 // Dueño del evento (organizer) o admin. `param` es el nombre del parámetro de ruta con el id del evento.
 export const authorizeEventOwner = (param = 'id') =>
-  authorizeOwnership({
-    loadResource: (req) => findEventById(req.params[param]),
-    ownerField: 'organizer',
-    bypassRoles: PERMISSIONS.EVENTS_MANAGE_ANY,
-  });
+  loadAuthorizedResource((req) => getManageableEvent(req.params[param], req.user));
 
 // Dueño del ticket o admin.
-export const authorizeTicketOwner = authorizeOwnership({
-  loadResource: (req) => findTicketById(req.params.tid),
-  ownerField: 'user',
-  bypassRoles: PERMISSIONS.TICKETS_CANCEL_ANY,
-});
+export const authorizeTicketOwner = loadAuthorizedResource((req) => getCancellableTicket(req.params.tid, req.user));

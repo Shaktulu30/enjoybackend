@@ -1,3 +1,3 @@
-import { sendError } from '../utils/response.js';
+import { AppError } from '../utils/AppError.js';
 
-export const notFound = (req, res) => sendError(res, `Ruta ${req.method} ${req.originalUrl} no encontrada`, 404);
+export const notFound = (req, res, next) => next(new AppError(`Ruta ${req.method} ${req.originalUrl} no encontrada`, 404));

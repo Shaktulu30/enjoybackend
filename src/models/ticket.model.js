@@ -1,19 +1,11 @@
 import mongoose from 'mongoose';
-
-export const TICKET_STATUS = Object.freeze({
-  CONFIRMED: 'confirmed',
-  PENDING: 'pending',
-  CANCELLED: 'cancelled',
-});
-
-// Estados que ocupan cupo. Los tickets cancelados no cuentan.
-export const ACTIVE_TICKET_STATUSES = [TICKET_STATUS.CONFIRMED, TICKET_STATUS.PENDING];
+import { ACTIVE_TICKET_STATUSES, TICKET_STATUS, TICKET_STATUS_VALUES } from '../constants/ticket.constants.js';
 
 const ticketSchema = new mongoose.Schema(
   {
     user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     event: { type: mongoose.Schema.Types.ObjectId, ref: 'Event', required: true },
-    status: { type: String, enum: Object.values(TICKET_STATUS), default: TICKET_STATUS.CONFIRMED },
+    status: { type: String, enum: TICKET_STATUS_VALUES, default: TICKET_STATUS.CONFIRMED },
     quantity: { type: Number, required: true, min: 1 },
     reservationCode: { type: String, required: true, unique: true },
     cancelledAt: { type: Date, default: null },

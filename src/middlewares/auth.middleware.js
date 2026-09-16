@@ -1,16 +1,15 @@
 import passport from 'passport';
-import { sendError } from '../utils/response.js';
+import { MESSAGES } from '../constants/messages.js';
+import { AppError } from '../utils/AppError.js';
 
-// Ejecuta una estrategia de Passport sin sesiones y traduce los fallos al formato de respuesta de la API.
-// Los fallos de las estrategias propias traen { message, statusCode }; los que genera Passport por su cuenta
-// (faltan credenciales -> 400, token ausente o inválido -> 401) se mapean acá.
+// Ejecuta una estrategia de Passport sin sesiones y deja el usuario en req.user.
+// Los errores de los servicios llegan como AppError; los fallos que genera Passport por su cuenta
+// (faltan credenciales -> 400, token ausente o inválido -> 401) se convierten acá. Todo sigue al errorHandler.
 export const passportCall = (strategy) => (req, res, next) => {
-  passport.authenticate(strategy, { session: false }, (error, user, info, status) => {
+  passport.authenticate(strategy, { session: false }, (error, user, _info, status) => {
     if (error) return next(error);
     if (!user) {
-      if (info?.statusCode) return sendError(res, info.message, info.statusCode);
-      if (status === 400) return sendError(res, 'Faltan campos obligatorios', 400);
-      return sendError(res, 'No autenticado', 401);
+      return next(status === 400 ? new AppError(MESSAGES.MISSING_FIELDS, 400) : new AppError(MESSAGES.UNAUTHENTICATED, 401));
     }
     req.user = user;
     return next();

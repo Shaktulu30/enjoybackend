@@ -5,7 +5,7 @@ import { AppError } from '../utils/AppError.js';
 import { isValidObjectId } from '../utils/validators.js';
 
 export const getAllUsers = async () => {
-  const users = await userRepository.getAll();
+  const users = await userRepository.findAll();
   return users.map(toPublicUser);
 };
 

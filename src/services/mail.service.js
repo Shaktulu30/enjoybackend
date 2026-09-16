@@ -46,7 +46,8 @@ export const sendEnrollmentConfirmation = async ({ user, event, ticket }) => {
     html,
   });
 
+  // Con Ethereal se muestra el link para ver el correo de prueba; con un SMTP real no se registra nada.
   const previewUrl = nodemailer.getTestMessageUrl(info);
-  console.log(`Email de confirmación enviado a ${user.email}${previewUrl ? ` (vista previa: ${previewUrl})` : ''}`);
+  if (previewUrl) console.log(`Email de confirmación enviado a ${user.email} (vista previa: ${previewUrl})`);
   return info;
 };

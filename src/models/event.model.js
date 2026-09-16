@@ -1,13 +1,5 @@
 import mongoose from 'mongoose';
-
-export const EVENT_CATEGORIES = ['clase', 'workshop', 'torneo', 'actividad'];
-
-export const EVENT_STATUS = Object.freeze({
-  DRAFT: 'draft',
-  PUBLISHED: 'published',
-  CANCELLED: 'cancelled',
-  FINISHED: 'finished',
-});
+import { EVENT_CATEGORIES, EVENT_STATUS, EVENT_STATUS_VALUES } from '../constants/event.constants.js';
 
 const eventSchema = new mongoose.Schema(
   {
@@ -18,7 +10,7 @@ const eventSchema = new mongoose.Schema(
     location: { type: String, required: true, trim: true },
     capacity: { type: Number, required: true, min: 1 },
     price: { type: Number, required: true, min: 0, default: 0 },
-    status: { type: String, enum: Object.values(EVENT_STATUS), default: EVENT_STATUS.PUBLISHED },
+    status: { type: String, enum: EVENT_STATUS_VALUES, default: EVENT_STATUS.PUBLISHED },
     organizer: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     // Se incrementa en cada inscripción dentro de la transacción: fuerza un conflicto de escritura entre
     // inscripciones simultáneas al mismo evento para que no se supere el cupo.
