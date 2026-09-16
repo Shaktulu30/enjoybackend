@@ -1,5 +1,7 @@
+import { randomUUID } from 'node:crypto';
 import { userRepository } from '../repositories/user.repository.js';
-import { createHash } from '../utils/hash.js';
+import { createHash, isValidPassword } from '../utils/hash.js';
+import { generateToken } from '../utils/jwt.js';
 import { AppError } from '../utils/AppError.js';
 import { toPublicUser } from '../dto/user.dto.js';
 import {
@@ -10,11 +12,17 @@ import {
   PASSWORD_MAX_BYTES,
 } from '../utils/validators.js';
 
-const REQUIRED_FIELDS = ['first_name', 'last_name', 'email', 'password'];
+const REGISTER_REQUIRED_FIELDS = ['first_name', 'last_name', 'email', 'password'];
+const LOGIN_REQUIRED_FIELDS = ['email', 'password'];
 const DUPLICATE_KEY_ERROR = 11000;
 
+// Hash de relleno: se compara aunque el email no exista, para que el tiempo de respuesta no delate si el usuario existe.
+const dummyHashPromise = createHash(randomUUID());
+
+const hasRequiredFields = (data, fields) => fields.every((field) => isNonEmptyString(data?.[field]));
+
 const validateRegisterData = (data) => {
-  if (!REQUIRED_FIELDS.every((field) => isNonEmptyString(data?.[field]))) {
+  if (!hasRequiredFields(data, REGISTER_REQUIRED_FIELDS)) {
     throw new AppError('Faltan campos obligatorios', 400);
   }
 
@@ -61,4 +69,19 @@ export const register = async (data) => {
     }
     throw error;
   }
+};
+
+export const login = async (data) => {
+  if (!hasRequiredFields(data, LOGIN_REQUIRED_FIELDS)) {
+    throw new AppError('Faltan campos obligatorios', 400);
+  }
+
+  const user = await userRepository.getByEmailWithPassword(normalizeEmail(data.email));
+  const passwordMatches = await isValidPassword(data.password, user?.password ?? (await dummyHashPromise));
+
+  if (!user || !passwordMatches) {
+    throw new AppError('Credenciales inválidas', 401);
+  }
+
+  return generateToken({ id: user._id.toString(), email: user.email, role: user.role });
 };

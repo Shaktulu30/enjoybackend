@@ -16,10 +16,6 @@ class UserRepository {
   getByEmailWithPassword(email) {
     return this.dao.findByEmailWithPassword(email);
   }
-
-  getById(id) {
-    return this.dao.findById(id);
-  }
 }
 
 export const userRepository = new UserRepository(new UserDAO());

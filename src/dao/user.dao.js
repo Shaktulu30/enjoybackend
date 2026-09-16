@@ -12,8 +12,4 @@ export class UserDAO {
   findByEmailWithPassword(email) {
     return UserModel.findOne({ email }).select('+password').lean();
   }
-
-  findById(id) {
-    return UserModel.findById(id).lean();
-  }
 }
