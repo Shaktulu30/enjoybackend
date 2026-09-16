@@ -17,6 +17,10 @@ class EventRepository {
     return this.dao.findById(id);
   }
 
+  lockForEnrollment(id, session) {
+    return this.dao.lockForEnrollment(id, session);
+  }
+
   update(id, data) {
     return this.dao.updateById(id, data);
   }

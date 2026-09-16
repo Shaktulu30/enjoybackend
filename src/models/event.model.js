@@ -20,6 +20,9 @@ const eventSchema = new mongoose.Schema(
     price: { type: Number, required: true, min: 0, default: 0 },
     status: { type: String, enum: Object.values(EVENT_STATUS), default: EVENT_STATUS.PUBLISHED },
     organizer: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    // Se incrementa en cada inscripción dentro de la transacción: fuerza un conflicto de escritura entre
+    // inscripciones simultáneas al mismo evento para que no se supere el cupo.
+    enrollmentVersion: { type: Number, default: 0, select: false },
   },
   { timestamps: true },
 );

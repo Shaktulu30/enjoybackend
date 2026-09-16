@@ -36,6 +36,10 @@ export class EventDAO {
     return EventModel.findById(id).lean();
   }
 
+  lockForEnrollment(id, session) {
+    return EventModel.findByIdAndUpdate(id, { $inc: { enrollmentVersion: 1 } }, { returnDocument: 'after', session, timestamps: false }).lean();
+  }
+
   updateById(id, data) {
     return EventModel.findByIdAndUpdate(id, data, { returnDocument: 'after', runValidators: true }).lean();
   }
