@@ -16,3 +16,6 @@ export const passportCall = (strategy) => (req, res, next) => {
     return next();
   })(req, res, next);
 };
+
+// Lee el JWT de la cookie (estrategia "current"), lo valida y deja { id, email, role } en req.user. 401 si no hay sesión válida.
+export const authenticate = passportCall('current');

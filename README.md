@@ -4,7 +4,7 @@ Proyecto integrador de la materia **Programación Backend II** (CoderHouse).
 
 API REST para gestionar las **clases y eventos del gimnasio Enjoy**: los organizadores (profes) crean eventos — clases, workshops, torneos o actividades — y los usuarios se inscriben ocupando un cupo.
 
-> 🚧 **Estado:** Pre-entrega 4 — autenticación centralizada con Passport.js (JWT en cookie HTTP Only). Las funcionalidades se agregan en cada pre-entrega (ver [Avance](#avance)).
+> 🚧 **Estado:** Pre-entrega 5 — roles y autorización (401 vs 403, matriz de permisos y propiedad de eventos). Las funcionalidades se agregan en cada pre-entrega (ver [Avance](#avance)).
 
 ## Tecnologías
 
@@ -59,9 +59,21 @@ npm start     # producción (node)
 
 El servidor queda disponible en `http://localhost:<PORT>` (por defecto `http://localhost:8080`).
 
+### Asignar roles (crear el primer admin u organizers)
+
+El registro público siempre crea usuarios con rol `user`. Para promover un usuario ya registrado:
+
+```bash
+npm run set-role -- ana@enjoy.com admin        # o organizer / user
+```
+
+Una vez que existe un admin, los demás roles se pueden asignar desde la API con `PATCH /api/users/:uid/role`. El usuario debe **volver a iniciar sesión** para que su token refleje el nuevo rol.
+
 ## Estructura de carpetas
 
 ```
+scripts/
+└── set-role.js                # Asigna un rol a un usuario existente (npm run set-role)
 src/
 ├── app.js                     # Configura Express (json, cookies, Passport, router /api, 404 y errores)
 ├── server.js                  # Punto de entrada: valida env, conecta a MongoDB y levanta el servidor
@@ -69,29 +81,38 @@ src/
 │   ├── env.js                 # Carga dotenv, expone la configuración y valida variables obligatorias
 │   ├── db.js                  # Conexión a MongoDB Atlas con Mongoose
 │   ├── cookie.js              # Nombre y opciones de la cookie de autenticación
-│   └── passport.config.js     # Estrategias de Passport: register, login y current
+│   ├── passport.config.js     # Estrategias de Passport: register, login y current
+│   └── roles.js               # Roles y matriz de permisos (PERMISSIONS)
 ├── routes/
 │   ├── index.js               # Router principal montado en /api
 │   ├── health.router.js
 │   ├── events.router.js
-│   └── sessions.router.js
+│   ├── sessions.router.js
+│   └── users.router.js        # Rutas administrativas
 ├── controllers/               # Manejo de request/response
 │   ├── health.controller.js
 │   ├── events.controller.js
-│   └── sessions.controller.js # Genera el JWT y maneja la cookie tras la autenticación
-├── services/                  # Lógica de negocio
-│   └── events.service.js
+│   ├── sessions.controller.js # Genera el JWT y maneja la cookie tras la autenticación
+│   └── users.controller.js
+├── services/                  # Lógica de negocio (validaciones, reglas)
+│   ├── events.service.js
+│   └── users.service.js
 ├── repositories/              # Acceso a datos desacoplado de la persistencia
+│   ├── event.repository.js
 │   └── user.repository.js
 ├── dao/                       # Operaciones concretas contra MongoDB
+│   ├── event.dao.js
 │   └── user.dao.js
 ├── dto/                       # Objetos de salida (qué datos se exponen)
+│   ├── event.dto.js
 │   └── user.dto.js
 ├── models/                    # Esquemas de Mongoose
 │   ├── user.model.js
 │   └── event.model.js
 ├── middlewares/
-│   ├── auth.middleware.js     # passportCall: ejecuta una estrategia y traduce sus fallos al formato de la API
+│   ├── auth.middleware.js     # authenticate (401) y passportCall
+│   ├── authorize.middleware.js # authorize(roles permitidos) (403)
+│   ├── ownership.middleware.js # authorizeEventOwner: dueño del evento o admin (403)
 │   ├── notFound.middleware.js
 │   └── errorHandler.middleware.js
 └── utils/
@@ -106,7 +127,64 @@ src/
 
 **User**: `first_name`, `last_name`, `email` (único, guardado en minúsculas), `password` (hash bcrypt, nunca se devuelve), `role` (`user` | `organizer` | `admin`, default `user`), timestamps.
 
-**Event**: `title`, `description`, `category` (`clase` | `workshop` | `torneo` | `actividad`), `date`, `location`, `capacity`, `organizer` (ref. User), timestamps.
+**Event**: `title`, `description`, `category` (`clase` | `workshop` | `torneo` | `actividad`), `date`, `location`, `capacity`, `organizer` (ref. User, dueño del evento), `status` (`published` | `cancelled`, default `published`), timestamps.
+
+## Roles y autorización
+
+### Roles
+
+| Rol | Quién es | Cómo se obtiene |
+|---|---|---|
+| `user` | Socio del gimnasio que consulta e (próximamente) se inscribe a eventos | Por defecto al registrarse |
+| `organizer` | Profe que crea y gestiona **sus** eventos | Lo asigna un admin (o `npm run set-role`) |
+| `admin` | Administración del gimnasio | `npm run set-role` o un admin existente |
+
+El registro público **no** permite elegir rol: si el body trae `role`, se ignora y se crea como `user`.
+
+### Matriz de permisos
+
+Definida en `src/config/roles.js` (`PERMISSIONS`). Las rutas referencian estas claves, nunca nombres de rol sueltos.
+
+| Acción | Visitante | `user` | `organizer` | `admin` | Permiso |
+|---|:-:|:-:|:-:|:-:|---|
+| Consultar eventos publicados | ✅ | ✅ | ✅ | ✅ | — (pública) |
+| Crear eventos | ❌ 401 | ❌ 403 | ✅ | ✅ | `EVENTS_CREATE` |
+| Modificar eventos propios | ❌ 401 | ❌ 403 | ✅ | ✅ | `EVENTS_UPDATE_OWN` |
+| Cancelar eventos propios | ❌ 401 | ❌ 403 | ✅ | ✅ | `EVENTS_CANCEL_OWN` |
+| Modificar / cancelar **cualquier** evento | ❌ 401 | ❌ 403 | ❌ 403 | ✅ | `EVENTS_MANAGE_ANY` |
+| Ver todos los usuarios | ❌ 401 | ❌ 403 | ❌ 403 | ✅ | `USERS_READ_ALL` |
+| Cambiar el rol de un usuario | ❌ 401 | ❌ 403 | ❌ 403 | ✅ | `USERS_UPDATE_ROLE` |
+| Ver la propia sesión (`/current`) | ❌ 401 | ✅ | ✅ | ✅ | autenticado |
+
+### Middlewares
+
+Se encadenan en las rutas en este orden; cada uno es reutilizable e independiente:
+
+```
+authenticate  →  authorize(PERMISSIONS.X)  →  authorizeEventOwner (si aplica)  →  controller
+    401               403                         404 / 403
+```
+
+| Middleware | Archivo | Qué hace | Error |
+|---|---|---|---|
+| `authenticate` | `auth.middleware.js` | Lee el JWT de la cookie `currentUser` (estrategia Passport `current`), lo valida y deja `{ id, email, role }` en `req.user` | **401** `No autenticado` |
+| `authorize(roles)` | `authorize.middleware.js` | Recibe los roles permitidos y los compara con `req.user.role` | **403** `No tenés permisos para realizar esta acción` |
+| `authorizeEventOwner` | `ownership.middleware.js` | Carga el evento; deja pasar si `req.user` es su `organizer` o si su rol está en `EVENTS_MANAGE_ANY` (admin) | **404** si no existe · **403** si es ajeno |
+
+```js
+// src/routes/events.router.js
+router.post('/', authenticate, authorize(PERMISSIONS.EVENTS_CREATE), createEvent);
+router.put('/:eid', authenticate, authorize(PERMISSIONS.EVENTS_UPDATE_OWN), authorizeEventOwner, updateEvent);
+```
+
+### 401 vs 403
+
+| Código | Significado | Cuándo |
+|---|---|---|
+| **401 Unauthorized** | **No sé quién sos.** No hay sesión válida. | Sin cookie, token inválido, manipulado o expirado |
+| **403 Forbidden** | **Sé quién sos, pero no podés hacer esto.** | Sesión válida pero el rol no está permitido, o el evento pertenece a otro organizer |
+
+El rol se toma del JWT: si un admin cambia el rol de un usuario, este debe volver a iniciar sesión para que el cambio aplique.
 
 ## Autenticación con Passport.js
 
@@ -117,7 +195,7 @@ Las rutas delegan en la estrategia correspondiente mediante `passportCall(nombre
 ```
 POST /register → passportCall('register') → controller.register  → 201 { payload: usuario }
 POST /login    → passportCall('login')    → controller.login     → genera JWT + cookie currentUser
-GET  /current  → passportCall('current')  → controller.current   → 200 { payload: { id, email, role } }
+GET  /current  → authenticate (= passportCall('current')) → controller.current → 200 { payload: { id, email, role } }
 POST /logout   → controller.logout (no pasa por Passport)         → borra la cookie
 ```
 
@@ -158,14 +236,20 @@ const strategies = {
 
 ## Rutas
 
-| Método | Ruta | Descripción | Auth |
+| Método | Ruta | Descripción | Acceso |
 |---|---|---|---|
-| GET | `/api/health` | Estado del servidor | — |
-| GET | `/api/events` | Lista de eventos (vacía por ahora) | — |
-| POST | `/api/sessions/register` | Registro de usuario | — |
-| POST | `/api/sessions/login` | Login: genera el JWT y setea la cookie `currentUser` | — |
-| GET | `/api/sessions/current` | Datos del usuario autenticado (desde el JWT) | 🔒 Cookie |
-| POST | `/api/sessions/logout` | Cierra sesión (elimina la cookie) | — |
+| GET | `/api/health` | Estado del servidor | Pública |
+| POST | `/api/sessions/register` | Registro de usuario (rol `user`) | Pública |
+| POST | `/api/sessions/login` | Login: genera el JWT y setea la cookie `currentUser` | Pública |
+| GET | `/api/sessions/current` | Datos del usuario autenticado (desde el JWT) | 🔒 Autenticado |
+| POST | `/api/sessions/logout` | Cierra sesión (elimina la cookie) | Pública |
+| GET | `/api/events` | Lista de eventos publicados | Pública |
+| GET | `/api/events/:eid` | Detalle de un evento publicado | Pública |
+| POST | `/api/events` | Crear evento | 🔒 `organizer`, `admin` |
+| PUT | `/api/events/:eid` | Modificar evento | 🔒 `organizer` dueño, `admin` |
+| PATCH | `/api/events/:eid/cancel` | Cancelar evento | 🔒 `organizer` dueño, `admin` |
+| GET | `/api/users` | Listar usuarios | 🔒 `admin` |
+| PATCH | `/api/users/:uid/role` | Cambiar el rol de un usuario | 🔒 `admin` |
 
 > Los ejemplos usan `curl` de **Git Bash**. `-c cookies.txt` guarda la cookie recibida y `-b cookies.txt` la envía. En Postman la cookie se guarda y reenvía automáticamente.
 
@@ -179,18 +263,6 @@ curl http://localhost:8080/api/health
 
 ```json
 { "status": "ok", "message": "Servidor activo" }
-```
-
-### GET /api/events
-
-```bash
-curl http://localhost:8080/api/events
-```
-
-**200**
-
-```json
-{ "status": "success", "payload": [] }
 ```
 
 ### POST /api/sessions/register
@@ -294,6 +366,158 @@ curl -X POST http://localhost:8080/api/sessions/logout -b cookies.txt -c cookies
 { "status": "success", "message": "Sesión cerrada" }
 ```
 
+### GET /api/events
+
+Lista los eventos con `status: "published"`, ordenados por fecha.
+
+```bash
+curl http://localhost:8080/api/events
+```
+
+**200**
+
+```json
+{
+  "status": "success",
+  "payload": [
+    {
+      "id": "6aaa9c427b5e7176f002420f",
+      "title": "Spinning intensivo",
+      "description": "Clase de 45 min",
+      "category": "clase",
+      "date": "2027-03-10T19:00:00.000Z",
+      "location": "Sala 2",
+      "capacity": 20,
+      "organizer": "6aaa9c3b7b5e7176f002420c",
+      "status": "published"
+    }
+  ]
+}
+```
+
+### GET /api/events/:eid
+
+```bash
+curl http://localhost:8080/api/events/6aaa9c427b5e7176f002420f
+```
+
+**200** → `{ "status": "success", "payload": { ...evento } }` · **400** `ID de evento inválido` · **404** `Evento no encontrado` (también si está cancelado)
+
+### POST /api/events 🔒 organizer / admin
+
+**Body (JSON):**
+
+| Campo | Tipo | Reglas |
+|---|---|---|
+| `title` | string | Obligatorio |
+| `category` | string | Obligatorio: `clase`, `workshop`, `torneo` o `actividad` |
+| `date` | string (ISO 8601) | Obligatorio, fecha futura |
+| `capacity` | number | Obligatorio, entero > 0 |
+| `description` | string | Opcional |
+| `location` | string | Opcional |
+
+El `organizer` se toma del usuario autenticado (no del body) y el `status` inicial es `published`.
+
+```bash
+curl -X POST http://localhost:8080/api/events -b cookies.txt \
+  -H "Content-Type: application/json" \
+  -d '{"title":"Spinning intensivo","description":"Clase de 45 min","category":"clase","date":"2027-03-10T19:00:00Z","location":"Sala 2","capacity":20}'
+```
+
+**201**
+
+```json
+{
+  "status": "success",
+  "payload": {
+    "id": "6aaa9c427b5e7176f002420f",
+    "title": "Spinning intensivo",
+    "description": "Clase de 45 min",
+    "category": "clase",
+    "date": "2027-03-10T19:00:00.000Z",
+    "location": "Sala 2",
+    "capacity": 20,
+    "organizer": "6aaa9c3b7b5e7176f002420c",
+    "status": "published"
+  }
+}
+```
+
+| Código | Caso | Respuesta |
+|---|---|---|
+| 400 | Faltan campos / datos inválidos | `{ "status": "error", "message": "Faltan campos obligatorios" }` (o el detalle del campo inválido) |
+| 401 | Sin sesión | `{ "status": "error", "message": "No autenticado" }` |
+| 403 | Autenticado como `user` | `{ "status": "error", "message": "No tenés permisos para realizar esta acción" }` |
+
+### PUT /api/events/:eid 🔒 organizer dueño / admin
+
+Actualiza uno o más de: `title`, `category`, `date`, `capacity`, `description`, `location` (con las mismas reglas que al crear). `organizer` y `status` no se pueden modificar por esta ruta y se ignoran.
+
+```bash
+curl -X PUT http://localhost:8080/api/events/6aaa9c427b5e7176f002420f -b cookies.txt \
+  -H "Content-Type: application/json" \
+  -d '{"capacity":25,"location":"Sala 3"}'
+```
+
+**200** → `{ "status": "success", "payload": { ...evento actualizado } }`
+
+| Código | Caso | Respuesta |
+|---|---|---|
+| 400 | ID inválido, datos inválidos o sin campos válidos | `{ "status": "error", "message": "No hay campos válidos para actualizar" }` |
+| 401 | Sin sesión | `{ "status": "error", "message": "No autenticado" }` |
+| 403 | `user`, o `organizer` que no es dueño del evento | `{ "status": "error", "message": "No tenés permisos para realizar esta acción" }` |
+| 404 | El evento no existe | `{ "status": "error", "message": "Evento no encontrado" }` |
+| 409 | El evento está cancelado | `{ "status": "error", "message": "El evento está cancelado" }` |
+
+### PATCH /api/events/:eid/cancel 🔒 organizer dueño / admin
+
+Cambia el `status` del evento a `cancelled` (deja de aparecer en el listado público).
+
+```bash
+curl -X PATCH http://localhost:8080/api/events/6aaa9c427b5e7176f002420f/cancel -b cookies.txt
+```
+
+**200** → `{ "status": "success", "payload": { ..., "status": "cancelled" } }` · mismos errores que `PUT` (409 si ya estaba cancelado)
+
+### GET /api/users 🔒 admin
+
+```bash
+curl http://localhost:8080/api/users -b cookies.txt
+```
+
+**200**
+
+```json
+{
+  "status": "success",
+  "payload": [
+    { "id": "6aaa8db17e684a75b105eda7", "first_name": "Ana", "last_name": "Gómez", "email": "ana@enjoy.com", "role": "user" }
+  ]
+}
+```
+
+**401** sin sesión · **403** como `user` u `organizer`
+
+### PATCH /api/users/:uid/role 🔒 admin
+
+**Body (JSON):** `role` (`user` | `organizer` | `admin`).
+
+```bash
+curl -X PATCH http://localhost:8080/api/users/6aaa8db17e684a75b105eda7/role -b cookies.txt \
+  -H "Content-Type: application/json" \
+  -d '{"role":"organizer"}'
+```
+
+**200** → `{ "status": "success", "payload": { ..., "role": "organizer" } }`
+
+| Código | Caso | Respuesta |
+|---|---|---|
+| 400 | ID o rol inválido | `{ "status": "error", "message": "El rol debe ser uno de: user, organizer, admin" }` |
+| 401 | Sin sesión | `{ "status": "error", "message": "No autenticado" }` |
+| 403 | No es admin | `{ "status": "error", "message": "No tenés permisos para realizar esta acción" }` |
+| 404 | El usuario no existe | `{ "status": "error", "message": "Usuario no encontrado" }` |
+| 409 | El admin intenta cambiar su propio rol | `{ "status": "error", "message": "No podés modificar tu propio rol" }` |
+
 ### Ruta inexistente
 
 **404**
@@ -317,6 +541,14 @@ curl -X POST http://localhost:8080/api/sessions/logout -b cookies.txt -c cookies
 | 9 | Login con contraseña incorrecta | 401 Credenciales inválidas |
 | 10 | `current` sin cookie | 401 No autenticado |
 | 11 | `current` con token manipulado o expirado | 401 No autenticado |
+| 12 | `POST /api/events` sin cookie | 401 No autenticado |
+| 13 | `POST /api/events` como `user` | 403 No tenés permisos |
+| 14 | `POST /api/events` como `organizer` / `admin` | 201 |
+| 15 | `GET /api/users` como `organizer` | 403 |
+| 16 | `GET /api/users` como `admin` | 200 (sin `password`) |
+| 17 | `PUT` / `PATCH cancel` de un evento ajeno como `organizer` | 403 |
+| 18 | `PUT` de un evento ajeno como `admin` | 200 |
+| 19 | `PATCH /api/users/:uid/role` como `organizer` | 403 |
 
 ## Avance
 
@@ -326,4 +558,5 @@ curl -X POST http://localhost:8080/api/sessions/logout -b cookies.txt -c cookies
 | 2 | Registro seguro de usuarios (validación, bcrypt, MongoDB) | ✅ |
 | 3 | Autenticación con JWT y cookies (login, current, logout) | ✅ |
 | 4 | Autenticación centralizada con Passport.js (estrategias register, login, current) | ✅ |
-| 5 – 8 | — | ⏳ Pendientes |
+| 5 | Roles y autorización (matriz de permisos, 401 vs 403, propiedad de eventos) | ✅ |
+| 6 – 8 | — | ⏳ Pendientes |
