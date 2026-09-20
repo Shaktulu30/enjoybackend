@@ -1,0 +1,1361 @@
+{
+  "info": {
+    "name": "Enjoy · Eventos e Inscripciones",
+    "description": "API REST del gimnasio Enjoy — Proyecto integrador de Programación Backend II (CoderHouse).\n\nLa carpeta **Flujo completo** recorre los 11 casos del checklist de la entrega final en orden: ejecutala con el Collection Runner y cada request va dejando en las variables lo que necesita la siguiente (ids de eventos, tickets, etc.).\n\nLa autenticación viaja en la cookie HttpOnly `currentUser`, que Postman guarda solo si el jar de cookies está habilitado. Como cada rol necesita su propia sesión, las carpetas hacen login antes de las requests que lo requieren.\n\n**Variables**\n- `baseUrl`: raíz de la API (por defecto `http://localhost:8080/api`)\n- `userEmail` / `organizerEmail` / `otherOrganizerEmail` / `adminEmail` / `password`: credenciales de prueba\n\nAntes de correr el flujo: levantá el servidor (`npm run dev`) y promové los roles con `npm run set-role -- <email> <rol>` (ver README).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080/api"
+    },
+    {
+      "key": "password",
+      "value": "Secreta123"
+    },
+    {
+      "key": "userEmail",
+      "value": "lucia@enjoy.com"
+    },
+    {
+      "key": "organizerEmail",
+      "value": "martin@enjoy.com"
+    },
+    {
+      "key": "otherOrganizerEmail",
+      "value": "sofia@enjoy.com"
+    },
+    {
+      "key": "adminEmail",
+      "value": "ana@enjoy.com"
+    },
+    {
+      "key": "eventId",
+      "value": ""
+    },
+    {
+      "key": "ticketId",
+      "value": ""
+    },
+    {
+      "key": "userId",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "Flujo completo (checklist de la entrega final)",
+      "description": "Los 11 casos verificados en `npm run e2e`, en el mismo orden. Correr con el Collection Runner de arriba hacia abajo.",
+      "item": [
+        {
+          "name": "01 · Registro (201, sin password)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "pm.test('no expone password', () => pm.expect(JSON.stringify(body)).to.not.include('password'));",
+                  "pm.test('devuelve rol user', () => pm.expect(body.payload.role).to.eql('user'));",
+                  "pm.collectionVariables.set('userId', body.payload.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/sessions/register",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sessions",
+                "register"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"first_name\": \"Lucia\",\n  \"last_name\": \"Pereyra\",\n  \"email\": \"{{userEmail}}\",\n  \"password\": \"{{password}}\"\n}"
+            },
+            "description": "El rol nunca se toma del body: aunque mandes `\"role\": \"admin\"`, el usuario se crea como `user`."
+          }
+        },
+        {
+          "name": "02 · Login user (200 + cookie HttpOnly)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const cookie = pm.response.headers.get('set-cookie') || '';",
+                  "pm.test('cookie currentUser HttpOnly', () => {",
+                  "  pm.expect(cookie).to.include('currentUser=');",
+                  "  pm.expect(cookie.toLowerCase()).to.include('httponly');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/sessions/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sessions",
+                "login"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{userEmail}}\",\n  \"password\": \"{{password}}\"\n}"
+            }
+          }
+        },
+        {
+          "name": "03 · /current con sesión (200, perfil completo)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('perfil completo', () => pm.expect(body.payload).to.have.all.keys('id', 'first_name', 'last_name', 'email', 'role'));",
+                  "pm.test('sin password', () => pm.expect(JSON.stringify(body)).to.not.include('password'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/sessions/current",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sessions",
+                "current"
+              ]
+            },
+            "description": "El perfil se relee de la base en cada llamada, así refleja un cambio de rol posterior al login."
+          }
+        },
+        {
+          "name": "04 · user intenta crear evento (403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403 Forbidden', () => pm.response.to.have.status(403));",
+                  "pm.test('mensaje de permisos', () => pm.expect(pm.response.json().message).to.include('permisos'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Clase pirata\",\n  \"description\": \"Un user no puede crear eventos\",\n  \"category\": \"clase\",\n  \"date\": \"{{$isoTimestamp}}\",\n  \"location\": \"Sede Centro\",\n  \"capacity\": 10\n}"
+            },
+            "description": "Autenticado pero sin el rol requerido: 403, no 401."
+          }
+        },
+        {
+          "name": "05 · Logout y /current sin sesión (401)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Cerramos sesión antes de pedir /current para comprobar el 401.",
+                  "pm.sendRequest({",
+                  "  url: pm.collectionVariables.get('baseUrl') + '/sessions/logout',",
+                  "  method: 'POST',",
+                  "}, () => {});"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', () => pm.response.to.have.status(401));",
+                  "pm.test('mensaje No autenticado', () => pm.expect(pm.response.json().message).to.eql('No autenticado'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/sessions/current",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sessions",
+                "current"
+              ]
+            },
+            "description": "El pre-request hace el logout; esta request comprueba que la cookie ya no sirve."
+          }
+        },
+        {
+          "name": "06 · Login organizer",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('el organizer existe y tiene el rol', () => pm.expect(pm.response.code).to.eql(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/sessions/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sessions",
+                "login"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{organizerEmail}}\",\n  \"password\": \"{{password}}\"\n}"
+            },
+            "description": "Requiere haber corrido `npm run set-role -- {{organizerEmail}} organizer`."
+          }
+        },
+        {
+          "name": "07 · organizer crea evento (201)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Fecha futura: 15 días a partir de ahora.",
+                  "pm.collectionVariables.set('futureDate', new Date(Date.now() + 15 * 86400000).toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "pm.test('status published', () => pm.expect(body.payload.status).to.eql('published'));",
+                  "pm.test('capacity 2', () => pm.expect(body.payload.capacity).to.eql(2));",
+                  "pm.collectionVariables.set('eventId', body.payload.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Funcional al aire libre\",\n  \"description\": \"Entrenamiento funcional en el parque\",\n  \"category\": \"clase\",\n  \"date\": \"{{futureDate}}\",\n  \"location\": \"Parque Sarmiento\",\n  \"capacity\": 2,\n  \"price\": 4500\n}"
+            },
+            "description": "Cupo chico (2) a propósito, para poder probar el agotamiento de cupo más adelante."
+          }
+        },
+        {
+          "name": "08 · user se inscribe (201 + email)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Volvemos a la sesión del user.",
+                  "pm.sendRequest({",
+                  "  url: pm.collectionVariables.get('baseUrl') + '/sessions/login',",
+                  "  method: 'POST',",
+                  "  header: { 'Content-Type': 'application/json' },",
+                  "  body: { mode: 'raw', raw: JSON.stringify({ email: pm.collectionVariables.get('userEmail'), password: pm.collectionVariables.get('password') }) },",
+                  "}, () => {});"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "pm.test('status confirmed', () => pm.expect(body.payload.status).to.eql('confirmed'));",
+                  "pm.test('tiene código de reserva', () => pm.expect(body.payload.reservationCode).to.match(/^ENJ-/));",
+                  "pm.collectionVariables.set('ticketId', body.payload.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/events/{{eventId}}/tickets",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events",
+                "{{eventId}}",
+                "tickets"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"quantity\": 1\n}"
+            },
+            "description": "Si las variables MAIL_* están configuradas, se envía el email de confirmación (con Ethereal, el link de vista previa aparece en la consola del servidor). `quantity` es opcional y vale 1 por defecto."
+          }
+        },
+        {
+          "name": "09 · Inscripción duplicada (409)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409 Conflict', () => pm.response.to.have.status(409));",
+                  "pm.test('mensaje de duplicado', () => pm.expect(pm.response.json().message).to.include('inscripción activa'));",
+                  "pm.test('error de negocio, no 500', () => pm.expect(pm.response.code).to.not.eql(500));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/events/{{eventId}}/tickets",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events",
+                "{{eventId}}",
+                "tickets"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
+          }
+        },
+        {
+          "name": "10 · Cupo insuficiente (409)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409 Conflict', () => pm.response.to.have.status(409));",
+                  "pm.test('mensaje claro de cupos', () => pm.expect(pm.response.json().message).to.match(/cupos/i));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/events/{{eventId}}/tickets",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events",
+                "{{eventId}}",
+                "tickets"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"quantity\": 50\n}"
+            },
+            "description": "Pide más lugares de los que quedan. El mensaje indica cuántos hay disponibles."
+          }
+        },
+        {
+          "name": "11 · Mis tickets (200, populate sin password)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('el evento viene populado y filtrado', () => {",
+                  "  pm.expect(body.payload[0].event).to.have.all.keys('id', 'title', 'date', 'location', 'status');",
+                  "});",
+                  "pm.test('sin password', () => pm.expect(JSON.stringify(body)).to.not.include('password'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/tickets/my-tickets",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "tickets",
+                "my-tickets"
+              ]
+            },
+            "description": "Solo los tickets propios. El populate del evento está filtrado por el DTO `toMyTicket`."
+          }
+        },
+        {
+          "name": "12 · Cancelar ticket propio (200, libera cupo)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('status cancelled', () => pm.expect(body.payload.status).to.eql('cancelled'));",
+                  "pm.test('registra cancelledAt', () => pm.expect(body.payload.cancelledAt).to.not.be.null);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "url": {
+              "raw": "{{baseUrl}}/tickets/{{ticketId}}/cancel",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "tickets",
+                "{{ticketId}}",
+                "cancel"
+              ]
+            },
+            "description": "Cancelación lógica: el ticket no se borra, cambia de estado y deja de ocupar cupo."
+          }
+        },
+        {
+          "name": "13 · organizer ajeno intenta modificar (403)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Entramos con el OTRO organizer, que no es dueño del evento.",
+                  "pm.sendRequest({",
+                  "  url: pm.collectionVariables.get('baseUrl') + '/sessions/login',",
+                  "  method: 'POST',",
+                  "  header: { 'Content-Type': 'application/json' },",
+                  "  body: { mode: 'raw', raw: JSON.stringify({ email: pm.collectionVariables.get('otherOrganizerEmail'), password: pm.collectionVariables.get('password') }) },",
+                  "}, () => {});"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403 Forbidden', () => pm.response.to.have.status(403));",
+                  "pm.test('no es 404: el evento existe, falta el permiso', () => pm.expect(pm.response.code).to.eql(403));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/events/{{eventId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events",
+                "{{eventId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Evento secuestrado\"\n}"
+            },
+            "description": "Requiere `npm run set-role -- {{otherOrganizerEmail}} organizer`. Tiene el rol pero no es dueño del recurso."
+          }
+        },
+        {
+          "name": "14 · admin modifica evento ajeno (200)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.sendRequest({",
+                  "  url: pm.collectionVariables.get('baseUrl') + '/sessions/login',",
+                  "  method: 'POST',",
+                  "  header: { 'Content-Type': 'application/json' },",
+                  "  body: { mode: 'raw', raw: JSON.stringify({ email: pm.collectionVariables.get('adminEmail'), password: pm.collectionVariables.get('password') }) },",
+                  "}, () => {});"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('título actualizado', () => pm.expect(pm.response.json().payload.title).to.include('admin'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/events/{{eventId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events",
+                "{{eventId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Funcional al aire libre (edición admin)\"\n}"
+            },
+            "description": "Requiere `npm run set-role -- {{adminEmail}} admin`. El admin pasa por encima de la propiedad del recurso."
+          }
+        },
+        {
+          "name": "15 · Inscriptos del evento (200, populate sin password)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.sendRequest({",
+                  "  url: pm.collectionVariables.get('baseUrl') + '/sessions/login',",
+                  "  method: 'POST',",
+                  "  header: { 'Content-Type': 'application/json' },",
+                  "  body: { mode: 'raw', raw: JSON.stringify({ email: pm.collectionVariables.get('organizerEmail'), password: pm.collectionVariables.get('password') }) },",
+                  "}, () => {});"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('informa cupo ocupado y disponible', () => {",
+                  "  pm.expect(body.payload.event).to.include.keys('capacity', 'occupied', 'available');",
+                  "});",
+                  "pm.test('el usuario populado no trae password', () => pm.expect(JSON.stringify(body)).to.not.include('password'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/events/{{eventId}}/tickets",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events",
+                "{{eventId}}",
+                "tickets"
+              ]
+            },
+            "description": "Solo el organizer dueño del evento o un admin. Devuelve el resumen de cupo y la lista de inscriptos."
+          }
+        },
+        {
+          "name": "16 · Listado paginado (200)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const p = pm.response.json().payload;",
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('estructura paginada', () => pm.expect(p).to.have.all.keys('data', 'page', 'limit', 'total', 'totalPages'));",
+                  "pm.test('page y limit respetados', () => {",
+                  "  pm.expect(p.page).to.eql(2);",
+                  "  pm.expect(p.limit).to.eql(5);",
+                  "});",
+                  "pm.test('totalPages coherente', () => pm.expect(p.totalPages).to.eql(Math.ceil(p.total / p.limit)));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/events?status=published&page=2&limit=5",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "published"
+                },
+                {
+                  "key": "page",
+                  "value": "2"
+                },
+                {
+                  "key": "limit",
+                  "value": "5"
+                }
+              ]
+            },
+            "description": "Si hay menos de 6 eventos publicados, `data` viene vacío pero la estructura es la misma. Creá más eventos para ver la segunda página con contenido."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Sessions",
+      "item": [
+        {
+          "name": "POST /sessions/register",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/sessions/register",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sessions",
+                "register"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"first_name\": \"Lucia\",\n  \"last_name\": \"Pereyra\",\n  \"email\": \"{{userEmail}}\",\n  \"password\": \"{{password}}\"\n}"
+            },
+            "description": "201 con el usuario sin password. 400 si faltan campos, el email es inválido o la contraseña tiene menos de 8 caracteres. 409 si el email ya existe. El rol siempre es `user`."
+          }
+        },
+        {
+          "name": "POST /sessions/login",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/sessions/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sessions",
+                "login"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{userEmail}}\",\n  \"password\": \"{{password}}\"\n}"
+            },
+            "description": "200 y cookie `currentUser` HttpOnly con el JWT. 401 con el mismo mensaje tanto si el email no existe como si la contraseña es incorrecta."
+          }
+        },
+        {
+          "name": "GET /sessions/current 🔒",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/sessions/current",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sessions",
+                "current"
+              ]
+            },
+            "description": "200 con `{ id, first_name, last_name, email, role }` releído de la base. 401 sin cookie o con token inválido, manipulado o expirado."
+          }
+        },
+        {
+          "name": "POST /sessions/logout",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/sessions/logout",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sessions",
+                "logout"
+              ]
+            },
+            "description": "Borra la cookie de autenticación. 200 siempre, haya o no sesión."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Events",
+      "item": [
+        {
+          "name": "GET /events (filtros, paginación y orden)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/events?status=published&category=workshop&location=Centro&dateFrom=2027-03-01&dateTo=2027-03-31&page=1&limit=10&sort=date",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "published",
+                  "description": "published | cancelled | finished (los draft no se listan)"
+                },
+                {
+                  "key": "category",
+                  "value": "workshop",
+                  "description": "clase | workshop | torneo | actividad"
+                },
+                {
+                  "key": "location",
+                  "value": "Centro",
+                  "description": "Coincidencia parcial, sin distinguir mayúsculas"
+                },
+                {
+                  "key": "dateFrom",
+                  "value": "2027-03-01"
+                },
+                {
+                  "key": "dateTo",
+                  "value": "2027-03-31",
+                  "description": "Si es solo fecha, incluye todo el día"
+                },
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "10",
+                  "description": "Entre 1 y 50"
+                },
+                {
+                  "key": "sort",
+                  "value": "date",
+                  "description": "date | price | capacity | title | createdAt. Prefijo '-' para descendente"
+                }
+              ]
+            },
+            "description": "Público. Devuelve `{ data, page, limit, total, totalPages }`. Todos los parámetros son opcionales; por defecto lista los publicados ordenados por fecha ascendente, 10 por página."
+          }
+        },
+        {
+          "name": "GET /events/:id",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/events/{{eventId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events",
+                "{{eventId}}"
+              ]
+            },
+            "description": "Público. 400 si el id no es un ObjectId válido, 404 si no existe o está en `draft`."
+          }
+        },
+        {
+          "name": "POST /events 🔒 organizer/admin",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Workshop de movilidad\",\n  \"description\": \"Trabajo de movilidad articular y respiración\",\n  \"category\": \"workshop\",\n  \"date\": \"2027-03-15T18:00:00.000Z\",\n  \"location\": \"Sede Centro\",\n  \"capacity\": 20,\n  \"price\": 0,\n  \"status\": \"published\"\n}"
+            },
+            "description": "`status` es opcional y solo acepta `draft` o `published` (por defecto `published`). 400 si la fecha es pasada, `capacity` no es entero > 0 o `price` es negativo. 401 sin sesión, 403 como `user`."
+          }
+        },
+        {
+          "name": "PUT /events/:id 🔒 dueño/admin",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/events/{{eventId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events",
+                "{{eventId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Workshop de movilidad (actualizado)\",\n  \"capacity\": 25\n}"
+            },
+            "description": "Actualización parcial de los campos editables. 400 si no viene ningún campo válido, 403 si el evento es ajeno, 409 si el evento está cancelado. El `status` no se cambia por acá."
+          }
+        },
+        {
+          "name": "PATCH /events/:id/status 🔒 dueño/admin",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/events/{{eventId}}/status",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events",
+                "{{eventId}}",
+                "status"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"cancelled\"\n}"
+            },
+            "description": "Transiciones válidas: draft → published/cancelled · published → draft/cancelled/finished. `cancelled` y `finished` son terminales: cualquier cambio desde ahí responde 409."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Tickets",
+      "item": [
+        {
+          "name": "POST /events/:eid/tickets 🔒",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/events/{{eventId}}/tickets",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events",
+                "{{eventId}}",
+                "tickets"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"quantity\": 1\n}"
+            },
+            "description": "Inscribe al usuario autenticado. 404 si el evento no existe o está en draft. 409 si el evento está cancelado o finalizado, si no hay cupo suficiente o si ya tenés una inscripción activa. Todo ocurre en una transacción, así que inscripciones simultáneas nunca superan el cupo."
+          }
+        },
+        {
+          "name": "GET /tickets/my-tickets 🔒",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/tickets/my-tickets",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "tickets",
+                "my-tickets"
+              ]
+            },
+            "description": "Tickets propios (activos y cancelados), del más reciente al más viejo, con los datos básicos del evento."
+          }
+        },
+        {
+          "name": "GET /events/:eid/tickets 🔒 dueño/admin",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/events/{{eventId}}/tickets",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events",
+                "{{eventId}}",
+                "tickets"
+              ]
+            },
+            "description": "Resumen de cupo (`capacity`, `occupied`, `available`) e inscriptos del evento. 403 como `user` o como organizer de otro evento."
+          }
+        },
+        {
+          "name": "PATCH /tickets/:tid/cancel 🔒 dueño/admin",
+          "request": {
+            "method": "PATCH",
+            "url": {
+              "raw": "{{baseUrl}}/tickets/{{ticketId}}/cancel",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "tickets",
+                "{{ticketId}}",
+                "cancel"
+              ]
+            },
+            "description": "Cancelación lógica: cambia `status` a `cancelled` y guarda `cancelledAt`. El ticket no se borra y el cupo queda liberado. 403 si el ticket es ajeno, 409 si ya estaba cancelado."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Users 🔒 admin",
+      "item": [
+        {
+          "name": "GET /users",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/users",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "users"
+              ]
+            },
+            "description": "Listado de usuarios sin `password`. 403 para cualquier rol que no sea admin."
+          }
+        },
+        {
+          "name": "PATCH /users/:uid/role",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/users/{{userId}}/role",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "users",
+                "{{userId}}",
+                "role"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"role\": \"organizer\"\n}"
+            },
+            "description": "Roles válidos: user, organizer, admin. 409 si intentás cambiar tu propio rol. El usuario debe volver a iniciar sesión para que el token refleje el cambio."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Errores y casos borde",
+      "description": "Cada código HTTP del checklist con un ejemplo reproducible.",
+      "item": [
+        {
+          "name": "400 · ID inválido",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/events/no-es-un-id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events",
+                "no-es-un-id"
+              ]
+            }
+          }
+        },
+        {
+          "name": "400 · Evento con fecha pasada 🔒 organizer",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Clase de ayer\",\n  \"description\": \"La fecha ya pasó\",\n  \"category\": \"clase\",\n  \"date\": \"2020-01-01T10:00:00.000Z\",\n  \"location\": \"Sede Centro\",\n  \"capacity\": 5\n}"
+            }
+          }
+        },
+        {
+          "name": "400 · capacity 0 / price negativo 🔒 organizer",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Clase imposible\",\n  \"description\": \"Cupo cero\",\n  \"category\": \"clase\",\n  \"date\": \"2027-06-01T10:00:00.000Z\",\n  \"location\": \"Sede Centro\",\n  \"capacity\": 0,\n  \"price\": -100\n}"
+            }
+          }
+        },
+        {
+          "name": "401 · Endpoint protegido sin sesión",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/sessions/current",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sessions",
+                "current"
+              ]
+            },
+            "description": "Borrá la cookie `currentUser` del jar de Postman antes de correr esta request."
+          }
+        },
+        {
+          "name": "401 · Login con contraseña incorrecta",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/sessions/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sessions",
+                "login"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{userEmail}}\",\n  \"password\": \"contrasenia-incorrecta\"\n}"
+            }
+          }
+        },
+        {
+          "name": "403 · GET /users como no-admin",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/users",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "users"
+              ]
+            }
+          }
+        },
+        {
+          "name": "404 · Evento inexistente",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/events/000000000000000000000000",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events",
+                "000000000000000000000000"
+              ]
+            }
+          }
+        },
+        {
+          "name": "404 · Ruta inexistente",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/no-existe",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "no-existe"
+              ]
+            }
+          }
+        },
+        {
+          "name": "409 · Email duplicado",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/sessions/register",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sessions",
+                "register"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"first_name\": \"Otra\",\n  \"last_name\": \"Lucia\",\n  \"email\": \"{{userEmail}}\",\n  \"password\": \"{{password}}\"\n}"
+            }
+          }
+        },
+        {
+          "name": "409 · Modificar un evento cancelado 🔒 dueño/admin",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/events/{{eventId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events",
+                "{{eventId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Ya no se puede\"\n}"
+            },
+            "description": "Cancelá primero el evento con `PATCH /events/:id/status`."
+          }
+        }
+      ]
+    },
+    {
+      "name": "GET /health",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/health",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "health"
+          ]
+        },
+        "description": "Chequeo de vida del servidor. No requiere autenticación."
+      }
+    }
+  ]
+}

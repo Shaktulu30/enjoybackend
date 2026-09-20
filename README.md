@@ -107,9 +107,25 @@ al vuelo e imprime el resultado de cada caso, incluida la URL para leer el email
 | 10 | `GET /api/events?status=published&page=2&limit=5` → `{ data, page, limit, total, totalPages }` |
 | 11 | Códigos diferenciados: 401 sin sesión, 400 id inválido y fecha pasada, 403 ticket ajeno, 404 evento y ruta, 409 email duplicado — ningún 500 |
 
+### Colección de Postman
+
+`postman/Enjoy.postman_collection.json` — 42 requests organizadas en cinco carpetas. Importala con **Import → File**.
+
+| Carpeta | Contenido |
+|---|---|
+| **Flujo completo** | Los 16 pasos del checklist en orden, con tests automáticos. Corrélos con el Collection Runner: cada request guarda en variables lo que necesita la siguiente (`eventId`, `ticketId`, `userId`) y las que cambian de rol hacen login en el pre-request. |
+| **Sessions / Events / Tickets / Users** | Cada endpoint por separado, con todos los filtros documentados y los códigos de error que puede devolver. |
+| **Errores y casos borde** | Un ejemplo reproducible de cada código: 400, 401, 403, 404 y 409. |
+
+Variables de la colección: `baseUrl` (por defecto `http://localhost:8080/api`), `password` y los cuatro emails de prueba.
+Antes de correr el flujo, levantá el servidor y promové los roles como se explica en [Asignar roles](#asignar-roles-crear-el-primer-admin-u-organizers).
+Postman necesita el jar de cookies habilitado, porque la sesión viaja en la cookie HttpOnly `currentUser`.
+
 ## Estructura de carpetas
 
 ```
+postman/
+└── Enjoy.postman_collection.json  # Colección con el flujo completo y todos los endpoints
 scripts/
 ├── set-role.js                # Asigna un rol a un usuario existente (npm run set-role)
 └── e2e.js                     # Verificación de punta a punta de toda la API (npm run e2e)
