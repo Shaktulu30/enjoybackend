@@ -4,7 +4,7 @@ Proyecto integrador de la materia **Programación Backend II** (CoderHouse).
 
 API REST para gestionar las **clases y eventos del gimnasio Enjoy**: los organizadores (profes) crean eventos — clases, workshops, torneos o actividades — y los usuarios se inscriben ocupando un cupo.
 
-> 🚧 **Estado:** Pre-entrega 8 — arquitectura formal en capas con DAO, Repository y DTO. Las funcionalidades se agregan en cada pre-entrega (ver [Avance](#avance)).
+> ✅ **Estado:** Entrega final — proyecto completo y verificado de punta a punta (`npm run e2e`). El recorrido pre-entrega por pre-entrega está en [Avance](#avance).
 
 ## Tecnologías
 
@@ -15,7 +15,7 @@ API REST para gestionar las **clases y eventos del gimnasio Enjoy**: los organiz
 - Passport.js (passport-local, passport-jwt)
 - Nodemailer (emails de confirmación por SMTP)
 - dotenv
-- nodemon (desarrollo)
+- nodemon (desarrollo) y mongodb-memory-server (verificación end-to-end)
 
 ## Instalación
 
@@ -57,6 +57,7 @@ node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
 ```bash
 npm run dev   # desarrollo (nodemon)
 npm start     # producción (node)
+npm run e2e   # verificación de punta a punta (no necesita .env ni base propia)
 ```
 
 El servidor queda disponible en `http://localhost:<PORT>` (por defecto `http://localhost:8080`).
@@ -69,13 +70,49 @@ El registro público siempre crea usuarios con rol `user`. Para promover un usua
 npm run set-role -- ana@enjoy.com admin        # o organizer / user
 ```
 
-Una vez que existe un admin, los demás roles se pueden asignar desde la API con `PATCH /api/users/:uid/role`. El usuario debe **volver a iniciar sesión** para que su token refleje el nuevo rol.
+Una vez que existe un admin, los demás roles se pueden asignar desde la API con `PATCH /api/users/:uid/role`.
+
+Secuencia completa para dejar la base lista con los tres roles:
+
+```bash
+# 1. Registrar los tres usuarios por la API (todos nacen con rol "user")
+curl -X POST http://localhost:8080/api/sessions/register -H "Content-Type: application/json"   -d '{"first_name":"Ana","last_name":"Gomez","email":"ana@enjoy.com","password":"Secreta123"}'
+curl -X POST http://localhost:8080/api/sessions/register -H "Content-Type: application/json"   -d '{"first_name":"Martin","last_name":"Diaz","email":"martin@enjoy.com","password":"Secreta123"}'
+curl -X POST http://localhost:8080/api/sessions/register -H "Content-Type: application/json"   -d '{"first_name":"Lucia","last_name":"Pereyra","email":"lucia@enjoy.com","password":"Secreta123"}'
+
+# 2. Promover a admin y organizer (lucia queda como "user")
+npm run set-role -- ana@enjoy.com admin
+npm run set-role -- martin@enjoy.com organizer
+```
+
+Un usuario promovido debe **volver a iniciar sesión** para que su token refleje el nuevo rol.
+
+### Verificación end-to-end
+
+`npm run e2e` recorre toda la API sin tocar tu base ni tu `.env`: levanta un MongoDB en memoria con replica set
+(necesario para las transacciones de inscripción), crea una cuenta SMTP de prueba en [Ethereal](https://ethereal.email)
+al vuelo e imprime el resultado de cada caso, incluida la URL para leer el email de confirmación que se envió.
+
+| # | Caso verificado |
+|---|---|
+| 1 | Registro → login (cookie HttpOnly) → `/current` → logout → `/current` da 401 |
+| 2 | `user` intenta crear un evento → 403 |
+| 3 | `organizer` crea un evento → `user` se inscribe → se envía el email → el cupo se descuenta |
+| 4 | Inscripción duplicada al mismo evento → 409 |
+| 5 | Inscripción sin cupo y pidiendo más lugares de los que quedan → 409 con mensaje claro |
+| 6 | Cancelación del ticket → el cupo se libera → una nueva inscripción entra |
+| 7 | `organizer` intenta modificar un evento ajeno (PUT y PATCH status) → 403 |
+| 8 | `admin` modifica el evento de otro organizador → 200 |
+| 9 | Siete respuestas distintas (incluidos los dos `populate`) sin `password` |
+| 10 | `GET /api/events?status=published&page=2&limit=5` → `{ data, page, limit, total, totalPages }` |
+| 11 | Códigos diferenciados: 401 sin sesión, 400 id inválido y fecha pasada, 403 ticket ajeno, 404 evento y ruta, 409 email duplicado — ningún 500 |
 
 ## Estructura de carpetas
 
 ```
 scripts/
-└── set-role.js                # Asigna un rol a un usuario existente (npm run set-role)
+├── set-role.js                # Asigna un rol a un usuario existente (npm run set-role)
+└── e2e.js                     # Verificación de punta a punta de toda la API (npm run e2e)
 src/
 ├── app.js                     # Configura Express (json, cookies, Passport, router /api, 404 y errores)
 ├── server.js                  # Punto de entrada: valida env, conecta a MongoDB y levanta el servidor
@@ -110,7 +147,7 @@ src/
 │   ├── tickets.controller.js
 │   └── users.controller.js
 ├── services/                  # Lógica de negocio
-│   ├── sessions.service.js    # Registro y validación de credenciales
+│   ├── sessions.service.js    # Registro, validación de credenciales y perfil del usuario autenticado
 │   ├── events.service.js      # CRUD, estados, filtros y permisos sobre eventos propios
 │   ├── tickets.service.js     # Inscripción, cupos, duplicados, cancelación y permisos sobre tickets propios
 │   ├── users.service.js       # Listado de usuarios y cambio de rol
@@ -212,7 +249,8 @@ Las respuestas salen de los services ya convertidas por un **DTO** (`dto/`), as�
 
 | DTO | Archivo | Se usa en | Campos |
 |---|---|---|---|
-| `toSessionUser` | `user.dto.js` | Login (payload del JWT) y `GET /api/sessions/current` | `id`, `email`, `role` |
+| `toSessionUser` | `user.dto.js` | Identidad que viaja en el JWT y queda en `req.user` | `id`, `email`, `role` |
+| `toCurrentUser` | `user.dto.js` | `GET /api/sessions/current` (documento releído de la base) | `id`, `first_name`, `last_name`, `email`, `role` |
 | `toPublicUser` | `user.dto.js` | Registro, `GET /api/users`, cambio de rol | `id`, `first_name`, `last_name`, `email`, `role` |
 | `toPublicEvent` | `event.dto.js` | Todas las respuestas de eventos | `id`, `title`, `description`, `category`, `date`, `location`, `capacity`, `price`, `status`, `organizer` (solo el id) |
 | `toTicket` | `ticket.dto.js` | Inscripción y cancelación | datos del ticket + ids de `event` y `user` |
@@ -581,11 +619,15 @@ curl http://localhost:8080/api/sessions/current -b cookies.txt
   "status": "success",
   "payload": {
     "id": "6aaa8db17e684a75b105eda7",
+    "first_name": "Ana",
+    "last_name": "Gómez",
     "email": "ana@enjoy.com",
     "role": "user"
   }
 }
 ```
+
+El perfil se **relee de la base** en cada llamada (no sale del token), así refleja un cambio de rol hecho después del login.
 
 | Código | Caso | Respuesta |
 |---|---|---|
@@ -963,7 +1005,7 @@ curl -X PATCH http://localhost:8080/api/users/6aaa8db17e684a75b105eda7/role -b c
 | 3 | Registro con email duplicado | 409 |
 | 4 | En MongoDB, `password` es un hash `$2b$10$...` | ✔ |
 | 5 | Login correcto | 200 + cookie `currentUser` HttpOnly |
-| 6 | `current` con la cookie | 200 con `{ id, email, role }` |
+| 6 | `current` con la cookie | 200 con `{ id, first_name, last_name, email, role }` |
 | 7 | Logout y luego `current` | 200 → 401 |
 | 8 | Login con email inexistente | 401 Credenciales inválidas |
 | 9 | Login con contraseña incorrecta | 401 Credenciales inválidas |
@@ -1011,3 +1053,4 @@ curl -X PATCH http://localhost:8080/api/users/6aaa8db17e684a75b105eda7/role -b c
 | 6 | Entidad events: CRUD, reglas de negocio, filtros, paginación y ordenamiento | ✅ |
 | 7 | Tickets: inscripciones, control de cupos, cancelaciones y email con Nodemailer | ✅ |
 | 8 | Arquitectura en capas: DAO, Repository y DTO, manejo centralizado de errores | ✅ |
+| **Final** | **Consolidación: `/current` con perfil completo, verificación end-to-end automatizada y documentación final** | ✅ |

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { userRepository } from '../repositories/user.repository.js';
-import { toPublicUser, toSessionUser } from '../dto/user.dto.js';
+import { toCurrentUser, toPublicUser, toSessionUser } from '../dto/user.dto.js';
 import { MESSAGES } from '../constants/messages.js';
 import { AppError } from '../utils/AppError.js';
 import { createHash, isValidPassword } from '../utils/hash.js';
@@ -63,4 +63,11 @@ export const validateCredentials = async (data) => {
   if (!user || !passwordMatches) throw new AppError(MESSAGES.INVALID_CREDENTIALS, 401);
 
   return toSessionUser(user);
+};
+
+// Perfil del usuario autenticado: se relee de la base para que los datos y el rol estén siempre actualizados.
+export const getCurrentUser = async (userId) => {
+  const user = await userRepository.findById(userId);
+  if (!user) throw new AppError(MESSAGES.UNAUTHENTICATED, 401);
+  return toCurrentUser(user);
 };

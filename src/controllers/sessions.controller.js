@@ -1,5 +1,5 @@
 import { AUTH_COOKIE_NAME, authCookieOptions, clearAuthCookieOptions } from '../config/cookie.js';
-import { toSessionUser } from '../dto/user.dto.js';
+import * as sessionsService from '../services/sessions.service.js';
 import { generateToken } from '../utils/jwt.js';
 import { sendSuccess } from '../utils/response.js';
 
@@ -12,7 +12,13 @@ export const login = (req, res) => {
   return sendSuccess(res, { message: 'Login correcto' });
 };
 
-export const current = (req, res) => sendSuccess(res, { payload: toSessionUser(req.user) });
+export const current = async (req, res, next) => {
+  try {
+    return sendSuccess(res, { payload: await sessionsService.getCurrentUser(req.user.id) });
+  } catch (error) {
+    return next(error);
+  }
+};
 
 export const logout = (req, res) => {
   res.clearCookie(AUTH_COOKIE_NAME, clearAuthCookieOptions);

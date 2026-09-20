@@ -7,7 +7,8 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
-    "set-role": "node scripts/set-role.js"
+    "set-role": "node scripts/set-role.js",
+    "e2e": "node scripts/e2e.js"
   },
   "keywords": [
     "node",
@@ -24,6 +25,7 @@
     "node": ">=18"
   },
   "devDependencies": {
+    "mongodb-memory-server": "^11.2.0",
     "nodemon": "^3.1.14"
   },
   "dependencies": {
